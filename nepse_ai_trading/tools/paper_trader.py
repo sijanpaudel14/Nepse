@@ -1236,6 +1236,87 @@ class PaperTrader:
         else:
             print("   Fundamental data not available")
         
+        # Sector Comparison (Critical for NEPSE context)
+        print("\n" + "-" * 70)
+        print("📊 SECTOR COMPARISON (How does this compare to peers?)")
+        print("-" * 70)
+        if fundamentals and sector != 'N/A':
+            # Get sector averages from screener (if available)
+            sector_avg_pe = 0
+            sector_avg_pbv = 0
+            sector_avg_roe = 0
+            
+            # Calculate sector averages from preloaded data or estimate
+            # For now, use hardcoded NEPSE sector benchmarks
+            sector_benchmarks = {
+                'Commercial Banks': {'pe': 12, 'pbv': 1.8, 'roe': 15},
+                'Development Banks': {'pe': 15, 'pbv': 1.5, 'roe': 12},
+                'Finance': {'pe': 18, 'pbv': 1.3, 'roe': 10},
+                'Hydro Power': {'pe': 25, 'pbv': 1.5, 'roe': 8},
+                'Life Insurance': {'pe': 20, 'pbv': 2.0, 'roe': 12},
+                'Non-Life Insurance': {'pe': 18, 'pbv': 1.8, 'roe': 10},
+                'Microfinance': {'pe': 10, 'pbv': 1.2, 'roe': 14},
+                'Hotels And Tourism': {'pe': 30, 'pbv': 1.5, 'roe': 6},
+                'Manufacturing And Processing': {'pe': 20, 'pbv': 1.4, 'roe': 8},
+                'Trading': {'pe': 15, 'pbv': 1.3, 'roe': 10},
+                'Others': {'pe': 20, 'pbv': 1.5, 'roe': 8},
+            }
+            
+            benchmark = sector_benchmarks.get(sector, {'pe': 20, 'pbv': 1.5, 'roe': 10})
+            sector_avg_pe = benchmark['pe']
+            sector_avg_pbv = benchmark['pbv']
+            sector_avg_roe = benchmark['roe']
+            
+            # Compare this stock to sector
+            pe = fundamentals.pe_ratio
+            pbv = fundamentals.pbv
+            roe = fundamentals.roe
+            
+            print(f"   Sector: {sector}")
+            print(f"   Sector Avg: PE {sector_avg_pe:.1f} | PBV {sector_avg_pbv:.1f} | ROE {sector_avg_roe:.1f}%")
+            print()
+            
+            # PE Comparison
+            if pe > 0:
+                pe_vs_sector = ((pe - sector_avg_pe) / sector_avg_pe) * 100
+                if pe_vs_sector > 30:
+                    pe_status = f"⚠️ EXPENSIVE ({pe_vs_sector:+.0f}% vs sector)"
+                elif pe_vs_sector > 10:
+                    pe_status = f"🟡 ABOVE AVG ({pe_vs_sector:+.0f}% vs sector)"
+                elif pe_vs_sector < -20:
+                    pe_status = f"✅ CHEAP ({pe_vs_sector:+.0f}% vs sector)"
+                else:
+                    pe_status = f"✅ FAIR ({pe_vs_sector:+.0f}% vs sector)"
+                print(f"   PE {pe:.1f}: {pe_status}")
+            
+            # PBV Comparison
+            pbv_vs_sector = ((pbv - sector_avg_pbv) / sector_avg_pbv) * 100
+            if pbv_vs_sector > 50:
+                pbv_status = f"⚠️ EXPENSIVE ({pbv_vs_sector:+.0f}% vs sector)"
+            elif pbv_vs_sector > 20:
+                pbv_status = f"🟡 ABOVE AVG ({pbv_vs_sector:+.0f}% vs sector)"
+            elif pbv_vs_sector < -20:
+                pbv_status = f"✅ CHEAP ({pbv_vs_sector:+.0f}% vs sector)"
+            else:
+                pbv_status = f"✅ FAIR ({pbv_vs_sector:+.0f}% vs sector)"
+            print(f"   PBV {pbv:.1f}: {pbv_status}")
+            
+            # ROE Comparison
+            roe_vs_sector = ((roe - sector_avg_roe) / sector_avg_roe) * 100
+            if roe_vs_sector > 20:
+                roe_status = f"✅ STRONG ({roe_vs_sector:+.0f}% vs sector)"
+            elif roe_vs_sector > 0:
+                roe_status = f"✅ ABOVE AVG ({roe_vs_sector:+.0f}% vs sector)"
+            elif roe_vs_sector > -20:
+                roe_status = f"🟡 BELOW AVG ({roe_vs_sector:+.0f}% vs sector)"
+            else:
+                roe_status = f"⚠️ WEAK ({roe_vs_sector:+.0f}% vs sector)"
+            print(f"   ROE {roe:.1f}%: {roe_status}")
+            
+            print()
+            print(f"   💡 Tip: In {sector}, PE of {sector_avg_pe} is normal.")
+            print(f"      {company_name} at PE {pe:.1f} is {pe_status.split('(')[0].strip()}")
+        
         # Dividend History
         print("\n" + "-" * 70)
         print("💵 DIVIDEND HISTORY (Last 3 Years)")
@@ -1356,6 +1437,48 @@ class PaperTrader:
         else:
             print("   Broker activity data not available (requires ShareHub authentication)")
         
+        # ========== RECENT NEWS ==========
+        print("\n" + "-" * 70)
+        print("📰 RECENT NEWS & ANNOUNCEMENTS")
+        print("-" * 70)
+        
+        # Try to fetch news (with timeout)
+        recent_news = []
+        try:
+            from intelligence.news_scraper import scrape_news_for_stock
+            import signal
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("News scraping timeout")
+            
+            # Set 15-second timeout
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(15)
+            
+            try:
+                recent_news = scrape_news_for_stock(symbol, limit=3, headless=True)
+                signal.alarm(0)  # Cancel alarm
+            except TimeoutError:
+                logger.debug(f"News scraping timed out for {symbol}")
+                signal.alarm(0)
+        except Exception as e:
+            logger.debug(f"Could not fetch news for {symbol}: {e}")
+        
+        if recent_news:
+            for i, news in enumerate(recent_news[:3], 1):
+                print(f"   {i}. {news.title}")
+                if news.date:
+                    print(f"      📅 {news.date} | 🌐 {news.source}")
+                else:
+                    print(f"      🌐 {news.source}")
+                if news.snippet:
+                    snippet = news.snippet[:100] + "..." if len(news.snippet) > 100 else news.snippet
+                    print(f"      {snippet}")
+                print()
+        else:
+            print("   No recent news available.")
+            print("   💡 Tip: Check ShareSansar or Merolagani for latest company updates.")
+        
         # Technical Indicators
         print("\n" + "-" * 70)
         print("📊 TECHNICAL INDICATORS")
@@ -1377,6 +1500,100 @@ class PaperTrader:
         print(f"      30-70  = Neutral range")
         print(f"      0-30   = Oversold (price may bounce)")
         print(f"      {company_name}'s RSI of {rsi:.1f} is {rsi_status.strip().replace('⚠️', '').replace('✅', '').strip()}")
+        
+        # ========== SUPPORT/RESISTANCE ZONES ==========
+        print("\n" + "-" * 70)
+        print("📍 SUPPORT & RESISTANCE ZONES (30-day analysis)")
+        print("-" * 70)
+        
+        # Calculate S/R zones from recent price history
+        try:
+            hist_30d = screener.fetcher.fetch_price_history(symbol, days=30)
+            if hist_30d is not None and len(hist_30d) > 10:
+                import pandas as pd
+                import numpy as np
+                
+                # Get recent highs and lows
+                highs = hist_30d['high'].values
+                lows = hist_30d['low'].values
+                closes = hist_30d['close'].values
+                
+                # Find resistance (recent high zones that price bounced off)
+                resistance_levels = []
+                support_levels = []
+                
+                # Simple method: Find local maxima/minima
+                for i in range(2, len(highs) - 2):
+                    # Local maximum (resistance)
+                    if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+                        resistance_levels.append(highs[i])
+                    
+                    # Local minimum (support)
+                    if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+                        support_levels.append(lows[i])
+                
+                # Cluster nearby levels (within 2%)
+                def cluster_levels(levels, tolerance=0.02):
+                    if not levels:
+                        return []
+                    levels = sorted(levels)
+                    clusters = []
+                    current_cluster = [levels[0]]
+                    
+                    for level in levels[1:]:
+                        if abs(level - current_cluster[-1]) / current_cluster[-1] < tolerance:
+                            current_cluster.append(level)
+                        else:
+                            clusters.append(np.mean(current_cluster))
+                            current_cluster = [level]
+                    
+                    clusters.append(np.mean(current_cluster))
+                    return clusters
+                
+                resistance_zones = cluster_levels(resistance_levels)
+                support_zones = cluster_levels(support_levels)
+                
+                # Show top 3 nearest zones
+                current_price = best_result.ltp
+                
+                # Resistance above current price
+                nearby_resistance = [r for r in resistance_zones if r > current_price]
+                nearby_resistance = sorted(nearby_resistance)[:3]
+                
+                # Support below current price
+                nearby_support = [s for s in support_zones if s < current_price]
+                nearby_support = sorted(nearby_support, reverse=True)[:3]
+                
+                print(f"   Current Price: Rs. {current_price:.2f}")
+                print()
+                
+                if nearby_resistance:
+                    print(f"   🔴 RESISTANCE (sell zones above):")
+                    for r in nearby_resistance:
+                        distance = ((r - current_price) / current_price) * 100
+                        print(f"      Rs. {r:.2f} (+{distance:.1f}% away)")
+                else:
+                    print(f"   🔴 RESISTANCE: No strong resistance detected above")
+                
+                print()
+                
+                if nearby_support:
+                    print(f"   🟢 SUPPORT (buy zones below):")
+                    for s in nearby_support:
+                        distance = ((current_price - s) / current_price) * 100
+                        print(f"      Rs. {s:.2f} (-{distance:.1f}% away)")
+                else:
+                    print(f"   🟢 SUPPORT: No strong support detected below")
+                
+                print()
+                print(f"   💡 Tip: Price tends to bounce at support, stall at resistance.")
+                print(f"      If price breaks resistance with volume, it may rally further.")
+                
+            else:
+                print("   Insufficient data to calculate support/resistance zones.")
+        except Exception as e:
+            logger.debug(f"Could not calculate S/R zones: {e}")
+            print("   Support/Resistance calculation unavailable.")
         
         # Trade Plan - CONDITIONAL on dump risk and momentum score
         print("\n" + "-" * 70)
@@ -1409,6 +1626,99 @@ class PaperTrader:
             print(f"   Stop Loss:     Rs. {best_result.stop_loss_with_slippage:.2f} (-6.5% with slippage)")
             print(f"   Expected Hold: {best_result.expected_holding_days}-{best_result.max_holding_days} days")
             print(f"   Exit Strategy: {best_result.exit_strategy}")
+        
+        # ========== ALTERNATIVE STOCKS (Better Options) ==========
+        print("\n" + "═" * 70)
+        print("💡 ALTERNATIVE STOCKS (Consider these instead)")
+        print("═" * 70)
+        
+        # Show alternatives if this stock is weak or high risk
+        value_score = value_result.total_score if value_result else 0
+        momentum_score = momentum_result.total_score if momentum_result else 0
+        best_score = max(value_score, momentum_score)
+        dump_risk = best_result.distribution_risk
+        
+        show_alternatives = (best_score < 60) or (dump_risk in ["HIGH", "CRITICAL"])
+        
+        if show_alternatives and sector != 'N/A':
+            print(f"\n   Since {symbol} shows risks, here are better alternatives in {sector}:")
+            print(f"   (These have higher scores and lower dump risk)")
+            print()
+            
+            # Try to get sector alternatives from screener
+            try:
+                # Run a quick screening for the same sector
+                # Import the actual screener classes
+                from analysis.master_screener import ValueScreener, MomentumScreener
+                
+                # Use momentum strategy for alternatives (faster)
+                alt_screener = MomentumScreener(fetcher=screener.fetcher)
+                
+                # Quick scan (don't load all market data again)
+                print(f"   🔍 Scanning {sector} sector for better opportunities...")
+                
+                # Get all stocks from this sector
+                sector_stocks = [
+                    comp for comp in screener._company_list 
+                    if comp.get('sectorName') == sector
+                ]
+                
+                if len(sector_stocks) > 5:
+                    # Limit to top 20 by market cap for speed
+                    sector_stocks = sorted(
+                        sector_stocks, 
+                        key=lambda x: x.get('marketCapitalization', 0),
+                        reverse=True
+                    )[:20]
+                
+                # Score each (quick mode - skip if too many)
+                alternatives = []
+                for stock_info in sector_stocks[:15]:  # Max 15 for speed
+                    sym = stock_info.get('symbol', '')
+                    if sym == symbol:  # Skip current stock
+                        continue
+                    
+                    try:
+                        # Quick score (no full analysis)
+                        result = alt_screener._score_stock({'symbol': sym})
+                        if result and result.total_score > best_score + 10:  # At least 10 points better
+                            alternatives.append({
+                                'symbol': sym,
+                                'name': result.name,
+                                'score': result.total_score,
+                                'dump_risk': result.distribution_risk,
+                                'ltp': result.ltp,
+                            })
+                    except:
+                        continue
+                
+                # Sort by score
+                alternatives = sorted(alternatives, key=lambda x: x['score'], reverse=True)[:5]
+                
+                if alternatives:
+                    print(f"\n   Symbol | Score | Dump Risk | Price")
+                    print(f"   " + "-" * 45)
+                    for alt in alternatives:
+                        risk_emoji = {"LOW": "✅", "MEDIUM": "🟡", "HIGH": "⚠️", "CRITICAL": "🚨"}.get(alt['dump_risk'], "❓")
+                        print(f"   {alt['symbol']:<6} | {alt['score']:>5.0f} | {risk_emoji} {alt['dump_risk']:<8} | Rs. {alt['ltp']:.2f}")
+                    
+                    print()
+                    print(f"   💡 Tip: These stocks score higher and have lower risk.")
+                    print(f"      Consider adding them to your watchlist.")
+                else:
+                    print(f"   No better alternatives found in {sector} at this time.")
+                    print(f"   Try checking other sectors (Banking, Hydro, etc.)")
+                
+            except Exception as e:
+                logger.debug(f"Could not fetch alternatives: {e}")
+                print(f"   Alternative stock screening unavailable.")
+                print(f"   💡 Tip: Manually check other {sector} stocks on NEPSE.")
+        else:
+            print(f"\n   {symbol} scores well ({best_score:.0f}/100). No alternatives needed.")
+            print(f"   💡 For diversification, consider other sectors:")
+            print(f"      • Commercial Banks (stable dividends)")
+            print(f"      • Hydro Power (growth potential)")
+            print(f"      • Life Insurance (moderate risk)")
         
         # Final Recommendation
         print("\n" + "═" * 70)
