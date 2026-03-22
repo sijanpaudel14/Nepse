@@ -987,6 +987,55 @@ class PaperTrader:
             print(f"   ⚠️ NOTE: Using historical data from {data_source_info} (market closed)")
         print("═" * 70)
         
+        # ========== TRAFFIC LIGHT SIGNAL (Quick Decision) ==========
+        # Calculate signal first (need scores and risks)
+        value_score_preview = value_result.total_score if value_result else 0
+        momentum_score_preview = momentum_result.total_score if momentum_result else 0
+        best_score_preview = max(value_score_preview, momentum_score_preview)
+        dump_risk_preview = best_result.distribution_risk if best_result else "UNKNOWN"
+        
+        # Determine signal
+        signal = "UNKNOWN"
+        signal_emoji = "⚪"
+        signal_reason = []
+        
+        if dump_risk_preview in ["HIGH", "CRITICAL"]:
+            signal = "REJECT"
+            signal_emoji = "🔴"
+            signal_reason.append(f"{dump_risk_preview.lower()} distribution risk")
+        
+        if best_score_preview < 50:
+            signal = "REJECT"
+            signal_emoji = "🔴"
+            if "distribution risk" not in str(signal_reason):
+                signal_reason.append("score < 50")
+        
+        if signal == "REJECT" and not signal_reason:
+            signal_reason.append("weak setup")
+        
+        # If not rejected, check for green signal
+        if signal != "REJECT":
+            if best_score_preview >= 70 and dump_risk_preview == "LOW":
+                signal = "BUY"
+                signal_emoji = "🟢"
+                signal_reason = [f"score {best_score_preview:.0f}/100", "low dump risk"]
+            elif best_score_preview >= 60:
+                signal = "CAUTION"
+                signal_emoji = "🟡"
+                signal_reason = [f"score {best_score_preview:.0f}/100", "moderate setup"]
+            else:
+                signal = "CAUTION"
+                signal_emoji = "🟡"
+                signal_reason = [f"score {best_score_preview:.0f}/100"]
+        
+        # Display traffic light
+        print()
+        print("🚦 TRADING SIGNAL: " + signal_emoji + " " + signal)
+        if signal_reason:
+            reason_text = " + ".join(signal_reason)
+            print(f"   Reason: {reason_text.capitalize()}")
+        print()
+        
         # ========== ENHANCED HEADER WITH MARKET CONTEXT ==========
         # Extract company details
         company_name = best_result.company_name if hasattr(best_result, 'company_name') else symbol
@@ -1788,7 +1837,7 @@ class PaperTrader:
         if should_block_entry:
             print(f"   ❌ NOT RECOMMENDED - Score: {momentum_score:.0f}/100")
             print(f"   {dump_risk_level} distribution risk. Operators dumped shares.")
-            print(f"   Wait for re-accumulation before entering momentum trade.")
+            print(f"   Wait 1-2 sessions for dust to settle and re-accumulation to appear before considering any momentum entry.")
         elif momentum_score >= 70 and not red_flags:
             print(f"   ✅ RECOMMENDED - Score: {momentum_score:.0f}/100")
             print(f"   Good technicals. Entry: Rs.{best_result.entry_price_with_slippage:.2f}, Target: Rs.{best_result.target_price:.2f}")
