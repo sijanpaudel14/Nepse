@@ -116,6 +116,14 @@ class ScreenedStock:
     distribution_risk: str = ""         # "LOW", "MEDIUM", "HIGH", "CRITICAL"
     distribution_warning: str = ""      # Detailed explanation for user
     
+    # INTRADAY DISTRIBUTION (Sunday Dump Detection)
+    intraday_dump_detected: bool = False  # True if pump-and-dump pattern detected today
+    today_open_price: float = 0.0         # Today's open price
+    today_vwap: float = 0.0               # Today's VWAP
+    open_vs_broker_pct: float = 0.0       # How much open was above broker avg
+    close_vs_vwap_pct: float = 0.0        # How much close was below VWAP
+    intraday_volume_spike: float = 0.0    # Today's volume vs 20-day avg
+    
     # Unlock risk
     days_until_unlock: int = 999
     unlock_type: str = ""  # "MutualFund" or "Promoter" or "None"
@@ -292,6 +300,24 @@ class MasterStockScreener:
     ATR_TARGET_MULTIPLIER = 3.0  # Target = LTP + (3.0 * ATR) → 1:2 R:R [BULL]
     ATR_STOP_MULTIPLIER_BEAR = 1.0   # Tighter stop in BEAR market
     ATR_TARGET_MULTIPLIER_BEAR = 2.0  # Conservative target in BEAR
+    
+    # ========== 🚨 VWAP INTRADAY DISTRIBUTION DETECTION (Sunday Dump Fix) ==========
+    # Detects when operators pump open price high and dump during the day
+    # Example: BARUN 2026-03-22 opened at 400 (+5.4% above broker avg), dumped to 385
+    THRESHOLD_OPEN_PREMIUM = 0.05       # Open >= broker_avg * 1.05 (5% above cost = pump signal)
+    THRESHOLD_OPEN_CRITICAL = 0.08      # Open >= broker_avg * 1.08 (8% = definite pump-and-dump)
+    THRESHOLD_VOLUME_MULTIPLIER = 1.5   # Volume >= 1.5x avg = unusual activity
+    THRESHOLD_VOLUME_CRITICAL = 2.0     # Volume >= 2.0x avg = panic dumping
+    THRESHOLD_VWAP_CLOSE_RATIO = 1.0    # Close < VWAP = distribution (selling pressure)
+    
+    # Penalties for intraday distribution detection
+    INTRADAY_DIST_PENALTY_CRITICAL = -20  # CRITICAL: Open spike + volume + close < VWAP
+    INTRADAY_DIST_PENALTY_HIGH = -15      # HIGH: 3+ conditions met
+    INTRADAY_DIST_PENALTY_MEDIUM = -10    # MEDIUM: 2 conditions met
+    
+    # Momentum score caps when distribution detected
+    MOMENTUM_CAP_CRITICAL = 35  # Max momentum score when CRITICAL distribution
+    MOMENTUM_CAP_HIGH = 45      # Max momentum score when HIGH distribution
     
     # Market Regime Enum-like constants
     REGIME_BULL = "BULL"
@@ -818,113 +844,121 @@ class MasterStockScreener:
         # Define async worker to reuse scraper instance
         async def _process_enrichment():
             scraper = None
-            if scrape_news and NEWS_AVAILABLE:
-                try:
-                    scraper = NewsScraper(headless=headless)
-                    # Pre-load cache ONCE (Batch Fetch)
-                    logger.info("      🚀 Batch fetching market news...")
-                    await scraper._scrape_market_news()
-                except Exception as e:
-                    logger.error(f"Failed to initialize scraper: {e}")
-                    scraper = None
-
-            for i, stock in enumerate(stocks):
-                symbol = stock.symbol
-                logger.info(f"   [{i+1}/{len(stocks)}] Analyzing {symbol}...")
-                
-                # Step 1: Scrape News (using shared scraper)
-                news_items = []
-                if scraper:
+            try:
+                if scrape_news and NEWS_AVAILABLE:
                     try:
-                        # This uses the cached news from _scrape_market_news
-                        news_items = await scraper.scrape_all_sources(symbol, limit=3)
-                        
-                        stock.news_headlines = [item.title for item in news_items]
-                        
-                        # Basic sentiment analysis based on keywords
-                        stock.news_sentiment, stock.news_score_adjustment = \
-                            self._analyze_news_sentiment(news_items)
-                        
-                        if stock.news_score_adjustment != 0:
-                            stock.total_score += stock.news_score_adjustment
-                            stock.total_score = min(100, max(0, stock.total_score))
-                            stock.breakdown.bonuses.append(
-                                f"📰 News Sentiment: {stock.news_sentiment} ({stock.news_score_adjustment:+.1f} pts)"
+                        scraper = NewsScraper(headless=headless)
+                        # Pre-load cache ONCE (Batch Fetch)
+                        logger.info("      🚀 Batch fetching market news...")
+                        await scraper._scrape_market_news()
+                    except Exception as e:
+                        error_text = str(e)
+                        if "Executable doesn't exist" in error_text:
+                            logger.warning(
+                                "News scraper disabled: Playwright browser is not installed. "
+                                "Run: playwright install chromium"
                             )
-                    except Exception as e:
-                        logger.warning(f"      ⚠️ News scrape failed for {symbol}: {e}")
-
-                # Step 2: AI Verdict (OpenAI)
-                if use_ai and AI_AVAILABLE:
-                    try:
-                        # Check if we actually have news headlines
-                        has_real_news = bool(news_items and len(news_items) > 0)
-                        
-                        # Format news for AI
-                        news_text = ""
-                        if has_real_news:
-                            news_text = "\n".join([f"- {item.title} ({item.source})" for item in news_items])
                         else:
-                            news_text = "No recent news available for this stock."
+                            logger.error(f"Failed to initialize scraper: {e}")
+                        scraper = None
 
-                        # Add fundamental context to news text
-                        fundamental_context = f"\n\nFundamental Data: PE={stock.pe_ratio:.1f}, PBV={stock.pbv:.2f}, ROE={stock.roe:.1f}%"
-                        if stock.winner:
-                            fundamental_context += f", Broker Signal: {stock.winner}"
-                            
-                        # Prepare signal data for AI
-                        signal_data = {
-                            "symbol": symbol,
-                            "entry_price": stock.ltp,
-                            "target_price": stock.target_price,
-                            "stop_loss": stock.stop_loss,
-                            "strategy_name": "4-Pillar Quantitative Engine",
-                            "confidence": stock.total_score / 10,  # Convert to 1-10
-                            "reason": stock.verdict_reason,
-                            "indicators": {
-                                "rsi": stock.rsi,
-                                "ema_signal": stock.ema_signal,
-                                "volume_spike": stock.volume_spike,
-                            },
-                            # Fundamental context
-                            "pe_ratio": stock.pe_ratio,
-                            "pb_ratio": stock.pbv,
-                            "roe": stock.roe,
-                            "eps": stock.eps,
-                            "valuation": "UNDERVALUED" if stock.pe_ratio < 15 else "FAIR" if stock.pe_ratio < 25 else "OVERVALUED",
-                            "broker_signal": stock.winner,
-                        }
-                            
-                        # Call AI Advisor
-                        verdict = get_ai_verdict(signal_data, news_text + fundamental_context)
-                        
-                        if verdict:
-                            stock.ai_verdict = verdict.verdict
-                            stock.ai_confidence = verdict.confidence
-                            
-                            # ANTI-HALLUCINATION GATEKEEPER:
-                            # If no real news was found, override AI summary to prevent fabrication
-                            if not has_real_news:
-                                stock.ai_summary = "No recent news found for this company."
-                                stock.ai_risks = "Technical trading only. Monitor for hidden fundamental risks."
+                for i, stock in enumerate(stocks):
+                    symbol = stock.symbol
+                    logger.info(f"   [{i+1}/{len(stocks)}] Analyzing {symbol}...")
+
+                    # Step 1: Scrape News (using shared scraper)
+                    news_items = []
+                    if scraper:
+                        try:
+                            # This uses the cached news from _scrape_market_news
+                            news_items = await scraper.scrape_all_sources(symbol, limit=3)
+
+                            stock.news_headlines = [item.title for item in news_items]
+
+                            # Basic sentiment analysis based on keywords
+                            stock.news_sentiment, stock.news_score_adjustment = \
+                                self._analyze_news_sentiment(news_items)
+
+                            if stock.news_score_adjustment != 0:
+                                stock.total_score += stock.news_score_adjustment
+                                stock.total_score = min(100, max(0, stock.total_score))
+                                stock.breakdown.bonuses.append(
+                                    f"📰 News Sentiment: {stock.news_sentiment} ({stock.news_score_adjustment:+.1f} pts)"
+                                )
+                        except Exception as e:
+                            logger.warning(f"      ⚠️ News scrape failed for {symbol}: {e}")
+
+                    # Step 2: AI Verdict (OpenAI)
+                    if use_ai and AI_AVAILABLE:
+                        try:
+                            # Check if we actually have news headlines
+                            has_real_news = bool(news_items and len(news_items) > 0)
+
+                            # Format news for AI
+                            news_text = ""
+                            if has_real_news:
+                                news_text = "\n".join([f"- {item.title} ({item.source})" for item in news_items])
                             else:
-                                stock.ai_summary = verdict.summary
-                                stock.ai_risks = verdict.risks
-                            
-                            logger.info(f"      ✅ AI Verdict: {stock.ai_verdict} (Confidence: {stock.ai_confidence:.1f}/10)")
-                            
-                            # Add AI recommendation to bonuses/penalties
-                            if "BUY" in stock.ai_verdict:
-                                stock.breakdown.bonuses.append(f"🤖 AI Verdict: {stock.ai_verdict}")
-                            elif "SELL" in stock.ai_verdict:
-                                stock.breakdown.penalties.append(f"🤖 AI Verdict: {stock.ai_verdict}")
-                                
-                    except Exception as e:
-                        logger.warning(f"      ⚠️ AI Analysis failed for {symbol}: {e}")
-            
-            # Cleanup
-            if scraper:
-                await scraper._close_browser()
+                                news_text = "No recent news available for this stock."
+
+                            # Add fundamental context to news text
+                            fundamental_context = f"\n\nFundamental Data: PE={stock.pe_ratio:.1f}, PBV={stock.pbv:.2f}, ROE={stock.roe:.1f}%"
+                            if stock.winner:
+                                fundamental_context += f", Broker Signal: {stock.winner}"
+
+                            # Prepare signal data for AI
+                            signal_data = {
+                                "symbol": symbol,
+                                "entry_price": stock.ltp,
+                                "target_price": stock.target_price,
+                                "stop_loss": stock.stop_loss,
+                                "strategy_name": "4-Pillar Quantitative Engine",
+                                "confidence": stock.total_score / 10,  # Convert to 1-10
+                                "reason": stock.verdict_reason,
+                                "indicators": {
+                                    "rsi": stock.rsi,
+                                    "ema_signal": stock.ema_signal,
+                                    "volume_spike": stock.volume_spike,
+                                },
+                                # Fundamental context
+                                "pe_ratio": stock.pe_ratio,
+                                "pb_ratio": stock.pbv,
+                                "roe": stock.roe,
+                                "eps": stock.eps,
+                                "valuation": "UNDERVALUED" if stock.pe_ratio < 15 else "FAIR" if stock.pe_ratio < 25 else "OVERVALUED",
+                                "broker_signal": stock.winner,
+                            }
+
+                            # Call AI Advisor
+                            verdict = get_ai_verdict(signal_data, news_text + fundamental_context)
+
+                            if verdict:
+                                stock.ai_verdict = verdict.verdict
+                                stock.ai_confidence = verdict.confidence
+
+                                # ANTI-HALLUCINATION GATEKEEPER:
+                                # If no real news was found, override AI summary to prevent fabrication
+                                if not has_real_news:
+                                    stock.ai_summary = "No recent news found for this company."
+                                    stock.ai_risks = "Technical trading only. Monitor for hidden fundamental risks."
+                                else:
+                                    stock.ai_summary = verdict.summary
+                                    stock.ai_risks = verdict.risks
+
+                                logger.info(f"      ✅ AI Verdict: {stock.ai_verdict} (Confidence: {stock.ai_confidence:.1f}/10)")
+
+                                # Add AI recommendation to bonuses/penalties
+                                if "BUY" in stock.ai_verdict:
+                                    stock.breakdown.bonuses.append(f"🤖 AI Verdict: {stock.ai_verdict}")
+                                elif "SELL" in stock.ai_verdict:
+                                    stock.breakdown.penalties.append(f"🤖 AI Verdict: {stock.ai_verdict}")
+
+                        except Exception as e:
+                            logger.warning(f"      ⚠️ AI Analysis failed for {symbol}: {e}")
+            finally:
+                # Cleanup
+                if scraper:
+                    await scraper._close_browser()
 
         # Run the async process
         try:
@@ -1242,28 +1276,49 @@ class MasterStockScreener:
             # CRITICAL: Seller dominant with high profit → Distribution in progress
             if is_seller_dominant and broker_profit_pct > 10:
                 distribution_risk = "CRITICAL"
-                warning = f"🚨 AVOID! Brokers up {broker_profit_pct:.1f}% (avg Rs.{broker_avg_cost:.0f}) AND sellers dominating ({seller_weight:.0f}%). Distribution in progress!"
+                warning = f"🚨 Dump Risk: CRITICAL – Brokers up {broker_profit_pct:.1f}% AND sellers dominating ({seller_weight:.0f}%). Active distribution in progress!"
                 penalty = -15.0
             
             # HIGH: Price significantly above broker cost
             elif broker_profit_pct >= 15:
                 distribution_risk = "HIGH"
-                warning = f"⚠️ RISKY! Price {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). Players may dump soon."
+                warning = f"⚠️ Dump Risk: HIGH – Price {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). Brokers sitting on big profits; may dump soon."
                 penalty = -10.0
             
             # MEDIUM: Moderate profit, watch for distribution signals
             elif broker_profit_pct >= 10:
                 distribution_risk = "MEDIUM"
-                warning = f"⚡ CAUTION: Price {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). Monitor for sell signals."
+                warning = f"🟡 Dump Risk: MODERATE – Price {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). A bit above average; still within normal range."
                 penalty = -5.0
             
             # LOW: Safe to buy, players still accumulating
             else:
                 distribution_risk = "LOW"
                 if broker_profit_pct < 5:
-                    warning = f"✅ SAFE: Only {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). Accumulation phase."
+                    warning = f"✅ Dump Risk: LOW – Only {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). Price close to broker average; not a pump-and-dump zone."
                 else:
-                    warning = f"🟢 OK: {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). Still within range."
+                    warning = f"🟢 Dump Risk: LOW – {broker_profit_pct:.1f}% above broker avg (Rs.{broker_avg_cost:.0f}). Still within normal accumulation range."
+            
+            # ========== 🚨 INTRADAY DISTRIBUTION DETECTION (Sunday Dump Fix) ==========
+            # This detects when operators pump the open price and dump during the day
+            # Example: BARUN opened at 400 (+5.4% above broker avg 379), dumped to 385, closed 390
+            intraday_risk = self._calculate_intraday_distribution_risk(symbol, broker_avg_cost, ltp)
+            
+            # Merge intraday risk with existing risk assessment
+            # If intraday detection finds higher risk, upgrade the risk level
+            if intraday_risk:
+                intraday_level = intraday_risk.get("risk_level", "LOW")
+                intraday_penalty = intraday_risk.get("penalty", 0)
+                intraday_warning = intraday_risk.get("warning", "")
+                
+                # Risk level hierarchy: CRITICAL > HIGH > MEDIUM > LOW
+                risk_hierarchy = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+                
+                if risk_hierarchy.get(intraday_level, 0) > risk_hierarchy.get(distribution_risk, 0):
+                    distribution_risk = intraday_level
+                    warning = intraday_warning
+                    penalty = min(penalty, intraday_penalty)  # Take the more severe penalty
+                    logger.info(f"   🚨 {symbol}: Intraday dump detected! Upgraded risk to {distribution_risk}")
             
             # Store in cache
             self._distribution_risk_cache[symbol] = {
@@ -1276,12 +1331,238 @@ class MasterStockScreener:
                 "seller_weight": seller_weight,
                 "lookback_days": lookback_used,
                 "calculation_method": calculation_method,
+                # New intraday distribution data
+                "intraday_dump_detected": intraday_risk.get("dump_detected", False) if intraday_risk else False,
+                "open_price": intraday_risk.get("open_price", 0) if intraday_risk else 0,
+                "open_vs_broker_pct": intraday_risk.get("open_vs_broker_pct", 0) if intraday_risk else 0,
+                "close_vs_vwap_pct": intraday_risk.get("close_vs_vwap_pct", 0) if intraday_risk else 0,
+                "volume_spike": intraday_risk.get("volume_spike", 0) if intraday_risk else 0,
+                "today_vwap": intraday_risk.get("today_vwap", 0) if intraday_risk else 0,
             }
             
             logger.debug(f"{symbol}: Distribution Risk = {distribution_risk} (Profit: {broker_profit_pct:.1f}%, Method: {calculation_method})")
             
         except Exception as e:
             logger.debug(f"Could not calculate distribution risk for {symbol}: {e}")
+    
+    def _calculate_intraday_distribution_risk(self, symbol: str, broker_avg_cost: float, ltp: float) -> Optional[Dict]:
+        """
+        🚨 INTRADAY DISTRIBUTION DETECTION - The "Sunday Dump" Fix
+        
+        WHAT THIS DETECTS:
+        ==================
+        Operators in NEPSE often:
+        1. PUMP the open price high (+5-10% above their cost)
+        2. DUMP shares throughout the day on high volume
+        3. Price closes BELOW VWAP (selling pressure > buying pressure)
+        
+        This is classic pump-and-dump that the previous logic missed because
+        it only compared LTP (close) to broker_avg. By the time market closes,
+        operators have already sold at the higher open/high prices!
+        
+        IMPORTANT: For dump detection, we always use a LONGER lookback (1M)
+        because operators accumulate over weeks/months, not days. Using 1W
+        would miss the dump because the avg cost would be too high.
+        
+        DETECTION CRITERIA:
+        ===================
+        Condition 1: open_price >= broker_avg * (1 + THRESHOLD_OPEN_PREMIUM)
+                     → Operators pumped the open price above their cost
+        
+        Condition 2: volume_today >= avg_volume * THRESHOLD_VOLUME_MULTIPLIER  
+                     → Unusual volume = distribution activity
+        
+        Condition 3: close_price < VWAP
+                     → Price rejected from VWAP = net selling pressure
+        
+        Condition 4 (bonus): close_price < open_price
+                     → Bearish candle = intraday dump confirmed
+        
+        RISK LEVELS:
+        ============
+        - CRITICAL: Open +8%+ above broker_avg AND 2+ other conditions
+        - HIGH: Open +5%+ above broker_avg AND 2+ other conditions
+        - MEDIUM: 2 conditions met
+        - LOW: 0-1 conditions met
+        
+        Args:
+            symbol: Stock symbol
+            broker_avg_cost: Estimated broker average cost (from VWAP or broker data)
+            ltp: Last traded price (close price)
+            
+        Returns:
+            Dict with intraday distribution risk assessment, or None if data unavailable
+        """
+        try:
+            # Fetch today's OHLCV data
+            df = self.fetcher.fetch_price_history(symbol, days=25)
+            
+            if df is None or df.empty or len(df) < 2:
+                return None
+            
+            # ========== GET LONGER-TERM BROKER AVG FOR DUMP DETECTION ==========
+            # For detecting pump-and-dump, we need the operator's ACCUMULATION cost
+            # which is over weeks/months, not the recent 1W avg. Use 1M data.
+            actual_broker_avg = broker_avg_cost  # Fallback to passed-in value
+            
+            if self.sharehub_token:
+                try:
+                    broker_data_1m = self.sharehub.get_broker_analysis(symbol, duration="1M")
+                    if broker_data_1m:
+                        total_buy_amount = sum(b.buy_amount for b in broker_data_1m if b.buy_amount > 0)
+                        total_buy_qty = sum(b.buy_quantity for b in broker_data_1m if b.buy_quantity > 0)
+                        
+                        if total_buy_qty > 0:
+                            actual_broker_avg = total_buy_amount / total_buy_qty
+                            logger.debug(f"{symbol}: Using 1M broker avg Rs.{actual_broker_avg:.2f} for dump detection (passed: Rs.{broker_avg_cost:.2f})")
+                except Exception as e:
+                    logger.debug(f"Could not get 1M broker avg for {symbol}: {e}")
+            
+            # Get today's data (last row)
+            today = df.iloc[-1]
+            high_price = float(today.get('high', 0) or 0)
+            low_price = float(today.get('low', 0) or 0)
+            close_price = float(today.get('close', ltp) or ltp)
+            volume_today = float(today.get('volume', 0) or 0)
+            
+            # ========== FETCH OPEN PRICE FROM SHAREHUB (CRITICAL!) ==========
+            # NEPSE API does NOT provide open price, but ShareHub does!
+            # This is essential for detecting Sunday Dump where operators pump at open
+            open_price = 0
+            
+            try:
+                from data.sharehub_api import get_price_history_with_open
+                sharehub_data = get_price_history_with_open(symbol, days=5)
+                
+                if sharehub_data and len(sharehub_data) > 0:
+                    # ShareHub returns latest data first
+                    today_sharehub = sharehub_data[0]
+                    if today_sharehub.get("open"):
+                        open_price = float(today_sharehub["open"])
+                        logger.debug(f"{symbol}: Got open={open_price:.2f} from ShareHub")
+            except Exception as e:
+                logger.debug(f"{symbol}: Could not fetch open from ShareHub: {e}")
+            
+            # Fallback: estimate open price if ShareHub fails
+            if open_price <= 0:
+                # Estimate open price: In NEPSE, if operators pump, they push price to HIGH first
+                # If HIGH is significantly above previous close, assume open was near HIGH
+                prev_day = df.iloc[-2] if len(df) >= 2 else None
+                prev_close = float(prev_day.get('close', 0) or 0) if prev_day is not None else 0
+                
+                if prev_close > 0 and high_price > prev_close * 1.02:  # >2% gap up
+                    # Operators pumped at open - estimate open near the high
+                    open_price = high_price  # Conservative: assume they opened at the high
+                    logger.debug(f"{symbol}: Estimated open = high ({high_price:.2f}) due to gap up from prev close ({prev_close:.2f})")
+                else:
+                    # Normal trading - estimate open between prev_close and close
+                    open_price = (high_price + low_price) / 2  # Midpoint as fallback
+            
+            if close_price <= 0 or volume_today <= 0 or high_price <= 0:
+                return None
+            
+            # Use the longer-term broker avg for pump detection
+            broker_avg_cost = actual_broker_avg
+            
+            # Calculate average volume (last 20 days, excluding today)
+            historical = df.iloc[:-1].tail(20)
+            avg_volume = historical['volume'].mean() if len(historical) > 0 else volume_today
+            
+            # Calculate today's VWAP (approximate using typical price)
+            # VWAP = (High + Low + Close) / 3 for daily approximation
+            # For more accuracy, we'd need intraday data, but this is sufficient for detection
+            today_vwap = (high_price + low_price + close_price) / 3
+            
+            # ========== CHECK CONDITIONS ==========
+            conditions_met = []
+            
+            # Condition 1: Open price pumped above broker cost
+            open_vs_broker_pct = ((open_price - broker_avg_cost) / broker_avg_cost * 100) if broker_avg_cost > 0 else 0
+            is_open_pumped = open_price >= broker_avg_cost * (1 + self.THRESHOLD_OPEN_PREMIUM)
+            is_open_critical = open_price >= broker_avg_cost * (1 + self.THRESHOLD_OPEN_CRITICAL)
+            
+            logger.debug(f"{symbol}: Intraday check - Open={open_price:.2f}, BrokerAvg={broker_avg_cost:.2f}, OpenPremium={open_vs_broker_pct:.1f}%, IsPumped={is_open_pumped}, IsCritical={is_open_critical}")
+            
+            if is_open_pumped:
+                conditions_met.append(f"Open pumped +{open_vs_broker_pct:.1f}% above broker avg")
+            
+            # Condition 2: Volume spike (unusual activity)
+            volume_spike = volume_today / avg_volume if avg_volume > 0 else 1.0
+            is_volume_spike = volume_spike >= self.THRESHOLD_VOLUME_MULTIPLIER
+            is_volume_critical = volume_spike >= self.THRESHOLD_VOLUME_CRITICAL
+            
+            if is_volume_spike:
+                conditions_met.append(f"Volume spike {volume_spike:.1f}x average")
+            
+            # Condition 3: Close below VWAP (selling pressure)
+            close_vs_vwap_pct = ((close_price - today_vwap) / today_vwap * 100) if today_vwap > 0 else 0
+            is_close_below_vwap = close_price < today_vwap * self.THRESHOLD_VWAP_CLOSE_RATIO
+            
+            if is_close_below_vwap:
+                conditions_met.append(f"Close below VWAP ({close_vs_vwap_pct:.1f}%)")
+            
+            # Condition 4 (bonus): Bearish candle (close < open)
+            is_bearish_candle = close_price < open_price
+            intraday_drop_pct = ((close_price - open_price) / open_price * 100) if open_price > 0 else 0
+            
+            if is_bearish_candle:
+                conditions_met.append(f"Bearish candle (dropped {abs(intraday_drop_pct):.1f}% intraday)")
+            
+            # ========== DETERMINE RISK LEVEL ==========
+            num_conditions = len(conditions_met)
+            
+            # CRITICAL: Open spike >= 8% AND 2+ other conditions (definite pump-and-dump)
+            if is_open_critical and num_conditions >= 3:
+                risk_level = "CRITICAL"
+                penalty = self.INTRADAY_DIST_PENALTY_CRITICAL
+                warning = f"🚨 CRITICAL RISK: Intraday dump detected! Open pumped +{open_vs_broker_pct:.1f}% above broker avg, volume {volume_spike:.1f}x, close below VWAP. AVOID for momentum trading!"
+                dump_detected = True
+            
+            # HIGH: Open spike >= 5% AND 2+ conditions (likely distribution)
+            elif is_open_pumped and num_conditions >= 2:
+                risk_level = "HIGH"
+                penalty = self.INTRADAY_DIST_PENALTY_HIGH
+                warning = f"⚠️ HIGH RISK: Distribution pattern! Open +{open_vs_broker_pct:.1f}% above broker avg with {volume_spike:.1f}x volume. Close rejected from VWAP. Proceed with extreme caution."
+                dump_detected = True
+            
+            # MEDIUM: Volume spike + bearish candle OR close below VWAP (warning sign)
+            elif num_conditions >= 2:
+                risk_level = "MEDIUM"
+                penalty = self.INTRADAY_DIST_PENALTY_MEDIUM
+                warning = f"🟡 MODERATE RISK: Possible distribution. Conditions: {', '.join(conditions_met[:2])}. Watch for follow-through."
+                dump_detected = False
+            
+            # LOW: Less than 2 conditions (no clear distribution signal)
+            else:
+                risk_level = "LOW"
+                penalty = 0
+                warning = ""
+                dump_detected = False
+            
+            return {
+                "risk_level": risk_level,
+                "penalty": penalty,
+                "warning": warning,
+                "dump_detected": dump_detected,
+                "conditions_met": conditions_met,
+                "num_conditions": num_conditions,
+                # Raw data for reporting
+                "open_price": open_price,
+                "close_price": close_price,
+                "high_price": high_price,
+                "low_price": low_price,
+                "today_vwap": round(today_vwap, 2),
+                "volume_today": volume_today,
+                "avg_volume": round(avg_volume, 0),
+                "volume_spike": round(volume_spike, 2),
+                "open_vs_broker_pct": round(open_vs_broker_pct, 2),
+                "close_vs_vwap_pct": round(close_vs_vwap_pct, 2),
+                "intraday_drop_pct": round(intraday_drop_pct, 2),
+            }
+            
+        except Exception as e:
+            logger.debug(f"Could not calculate intraday distribution risk for {symbol}: {e}")
+            return None
 
     def _get_nepse_5d_return(self) -> float:
         """Calculate NEPSE Index 5-day return."""
@@ -1586,7 +1867,7 @@ class MasterStockScreener:
         symbol = stock.get("symbol", "")
         name = stock.get("securityName", stock.get("name", ""))
         sector = self._symbol_sector_map.get(symbol, stock.get("sectorName", ""))
-        ltp = float(stock.get("lastTradedPrice", 0) or stock.get("close", 0) or 0)
+        ltp = float(stock.get("lastTradedPrice", 0) or stock.get("close", 0) or stock.get("ltp", 0) or 0)
         
         # CRITICAL: Skip stocks with invalid price data
         if ltp <= 0:
@@ -1747,6 +2028,13 @@ class MasterStockScreener:
             result.broker_profit_pct = dist_risk.get("profit_pct", 0)
             result.distribution_risk = dist_risk.get("risk_level", "N/A")
             result.distribution_warning = dist_risk.get("warning", "")
+            # New intraday distribution fields
+            result.intraday_dump_detected = dist_risk.get("intraday_dump_detected", False)
+            result.today_open_price = dist_risk.get("open_price", 0) if "open_price" in dist_risk else 0
+            result.today_vwap = dist_risk.get("today_vwap", 0)
+            result.open_vs_broker_pct = dist_risk.get("open_vs_broker_pct", 0)
+            result.close_vs_vwap_pct = dist_risk.get("close_vs_vwap_pct", 0)
+            result.intraday_volume_spike = dist_risk.get("volume_spike", 0)
         
         # ===== STRATEGY BONUS (Target Sector) =====
         sector_bonus = 0.0
@@ -1843,6 +2131,29 @@ class MasterStockScreener:
         
         # 4. Calculate Final Score (including risk penalties)
         result.total_score = base_score + result.market_regime_penalty + risk_penalty
+        
+        # ========== 🚨 MOMENTUM SCORE CAP FOR INTRADAY DISTRIBUTION ==========
+        # If intraday dump detected (Sunday Dump pattern), cap the momentum score
+        # This prevents recommending "RISKY - trade with tight stop" for stocks being dumped
+        dist_risk = self._distribution_risk_cache.get(symbol, {})
+        if self.strategy == "momentum" and dist_risk.get("intraday_dump_detected", False):
+            risk_level = dist_risk.get("risk_level", "LOW")
+            
+            if risk_level == "CRITICAL":
+                # CRITICAL: Cap at 35, force NOT RECOMMENDED
+                old_score = result.total_score
+                result.total_score = min(result.total_score, self.MOMENTUM_CAP_CRITICAL)
+                if old_score > self.MOMENTUM_CAP_CRITICAL:
+                    logger.warning(f"   🚨 {symbol}: Momentum score capped {old_score:.0f}→{result.total_score:.0f} (CRITICAL intraday dump)")
+                result.verdict_reason = f"🔴 NOT RECOMMENDED ({result.total_score:.0f}/100) | Distribution in progress"
+                
+            elif risk_level == "HIGH":
+                # HIGH: Cap at 45, force WEAK
+                old_score = result.total_score
+                result.total_score = min(result.total_score, self.MOMENTUM_CAP_HIGH)
+                if old_score > self.MOMENTUM_CAP_HIGH:
+                    logger.warning(f"   ⚠️ {symbol}: Momentum score capped {old_score:.0f}→{result.total_score:.0f} (HIGH intraday dump)")
+                result.verdict_reason = f"🔴 WEAK ({result.total_score:.0f}/100) | High distribution risk"
         
         # Store uncapped score for sorting
         result.raw_score = result.total_score

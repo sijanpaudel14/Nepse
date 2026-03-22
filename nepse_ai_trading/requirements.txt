@@ -1,20 +1,14 @@
-# NEPSE AI Trading Bot - Dependencies
+# nePSE AI Trading Bot - Dependencies
 # =====================================
-
+fastapi
 # Core Data Processing
-pandas==2.2.0
-numpy==1.26.3
-pandas-ta==0.3.14b0
-
-# NEPSE Unofficial API
-# Option 1: Install from local folder (if you downloaded it)
-# pip install -e ../NepseUnofficialApi
-# Option 2: Install from GitHub (default)
-nepse @ git+https://github.com/basic-bgnr/NepseUnofficialApi
+pandas>=2.2.3
+numpy>=1.26.4
+pandas-ta>=0.4.67b0
 
 # HTTP (required by NepseUnofficialApi)
-httpx==0.26.0
-tqdm==4.66.1
+httpx>=0.27.2
+tqdm>=4.67.1
 
 # Database
 sqlalchemy==2.0.25
@@ -46,7 +40,7 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 
 # Notifications
-python-telegram-bot==20.7
+python-telegram-bot>=21.0
 aiosmtplib==3.0.1
 
 # Scheduler
@@ -71,4 +65,4 @@ isort==5.13.2
 mypy==1.8.0
 
 # Backtesting & Visualization
-matplotlib==3.8.2
+matplotlib>=3.9.0

@@ -40,9 +40,33 @@ import requests
 import time
 import random
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from loguru import logger
+
+# Load .env from current or parent directories
+def _load_env():
+    """Load .env file from current directory or parent directories."""
+    try:
+        from dotenv import load_dotenv
+        current = Path.cwd()
+        for _ in range(4):  # Check up to 3 parent levels
+            env_path = current / ".env"
+            if env_path.exists():
+                load_dotenv(env_path)
+                logger.debug(f"Loaded .env from {env_path}")
+                return
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        # Fallback - try default
+        load_dotenv()
+    except ImportError:
+        pass  # dotenv not installed, rely on system env vars
+
+_load_env()
 
 from data.data_cleaner import parse_nepse_number
 
@@ -1274,18 +1298,40 @@ class ShareHubAPI:
         if not data:
             return []
 
-        # Parse broker data
+        # Parse broker data - handle nested response structure
+        # API returns: {"success": true, "data": {"brokerAnalysisData": [...]}}
+        broker_list = []
+        if isinstance(data, dict):
+            # New API structure with nested data
+            broker_list = data.get("brokerAnalysisData", [])
+            if not broker_list and "data" in data:
+                broker_list = data.get("data", {}).get("brokerAnalysisData", [])
+        elif isinstance(data, list):
+            broker_list = data
+        
         brokers = []
-        for item in data if isinstance(data, list) else []:
+        for item in broker_list:
+            # Handle both old and new field names
+            broker_code = item.get("brokerCode") or item.get("brokerId", "")
+            broker_name = item.get("brokerName") or item.get("name", "")
+            
+            # Calculate net if not provided
+            buy_qty = int(item.get("buyQty") or item.get("buyQuantity", 0) or 0)
+            sell_qty = int(item.get("sellQty") or item.get("sellQuantity", 0) or 0)
+            buy_amt = float(item.get("buyAmt") or item.get("buyAmount", 0) or 0)
+            sell_amt = float(item.get("sellAmt") or item.get("sellAmount", 0) or 0)
+            net_qty = int(item.get("netQty") or item.get("netQuantity", buy_qty - sell_qty) or 0)
+            net_amt = float(item.get("netAmt") or item.get("netAmount", buy_amt - sell_amt) or 0)
+            
             brokers.append(BrokerData(
-                broker_code=item.get("brokerCode", ""),
-                broker_name=item.get("brokerName", ""),
-                buy_quantity=item.get("buyQty", 0) or 0,
-                sell_quantity=item.get("sellQty", 0) or 0,
-                buy_amount=item.get("buyAmt", 0) or 0,
-                sell_amount=item.get("sellAmt", 0) or 0,
-                net_quantity=item.get("netQty", 0) or 0,
-                net_amount=item.get("netAmt", 0) or 0,
+                broker_code=str(broker_code),
+                broker_name=broker_name,
+                buy_quantity=buy_qty,
+                sell_quantity=sell_qty,
+                buy_amount=buy_amt,
+                sell_amount=sell_amt,
+                net_quantity=net_qty,
+                net_amount=net_amt,
             ))
 
         return brokers
@@ -1869,3 +1915,53 @@ def get_broker_accumulated_stocks(auth_token: str, duration: str = "1D") -> List
         )
         for h in holdings
     ]
+
+
+# Standalone helper for getting price history with OPEN price
+def get_price_history_with_open(symbol: str, days: int = 10) -> Optional[List[Dict]]:
+    """
+    🚨 GET PRICE HISTORY WITH OPEN PRICE FROM SHAREHUB
+    
+    CRITICAL: NEPSE API does NOT provide open price, but ShareHub does!
+    This is essential for detecting pump-and-dump scenarios where operators
+    pump the open price and dump throughout the day.
+    
+    Args:
+        symbol: Stock symbol (e.g., "BARUN")
+        days: Number of days to fetch (default: 10)
+    
+    Returns:
+        List of dicts with keys: date, open, high, low, close, volume
+        Returns None if API fails
+    
+    Example:
+        data = get_price_history_with_open("BARUN", days=5)
+        if data:
+            today = data[0]  # Latest data first
+            open_price = today["open"]
+            close_price = today["close"]
+    """
+    try:
+        url = f"https://sharehubnepal.com/data/api/v1/price-history?pageSize={days}&symbol={symbol}"
+        response = requests.get(url, headers={"accept": "application/json"}, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success") and data.get("data", {}).get("content"):
+                content = data["data"]["content"]
+                return [
+                    {
+                        "date": item["date"],
+                        "open": float(item["open"]) if item.get("open") else None,
+                        "high": float(item["high"]) if item.get("high") else None,
+                        "low": float(item["low"]) if item.get("low") else None,
+                        "close": float(item["close"]) if item.get("close") else None,
+                        "volume": float(item["volume"]) if item.get("volume") else None,
+                    }
+                    for item in content
+                ]
+        logger.warning(f"Failed to fetch ShareHub price history for {symbol}: {response.status_code}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error fetching ShareHub price history for {symbol}: {e}")
+        return None

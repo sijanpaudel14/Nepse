@@ -76,6 +76,7 @@ class NewsScraper:
         self.headless = headless
         self.timeout = timeout
         self._browser: Optional[Browser] = None # type: ignore
+        self._playwright = None
         self._news_cache: List[NewsItem] = []  # Cache for latest market news
         self._cache_time: Optional[datetime] = None
 
@@ -83,8 +84,8 @@ class NewsScraper:
     async def _get_browser(self) -> Browser: # type: ignore
         """Get or create browser instance."""
         if self._browser is None:
-            playwright = await async_playwright().start()
-            self._browser = await playwright.chromium.launch(
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
                 headless=self.headless,
                 args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
@@ -93,8 +94,17 @@ class NewsScraper:
     async def _close_browser(self):
         """Close browser instance."""
         if self._browser:
-            await self._browser.close()
+            try:
+                await self._browser.close()
+            except Exception as e:
+                logger.debug(f"Browser close ignored: {e}")
             self._browser = None
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception as e:
+                logger.debug(f"Playwright stop ignored: {e}")
+            self._playwright = None
     
     async def close(self):
         """Public method to clean up resources."""

@@ -172,6 +172,23 @@ class NepseFetcher:
             else:
                 history = response if response else []
             
+            # NEPSE API quirk: Range query often misses today's data due to caching lag
+            # Fetch today explicitly and merge if missing
+            today_response = self.nepse.getCompanyPriceVolumeHistory(symbol, end_date, end_date)
+            if isinstance(today_response, dict):
+                today_data = today_response.get("content", [])
+            else:
+                today_data = today_response if today_response else []
+            
+            # Merge today's data if not already present
+            if today_data:
+                today_date_str = str(end_date)
+                existing_dates = {item.get("businessDate") for item in history}
+                for td in today_data:
+                    if td.get("businessDate") not in existing_dates:
+                        history.append(td)
+                        logger.debug(f"Added today's data ({td.get('businessDate')}) for {symbol}")
+            
             if not history:
                 logger.warning(f"No history for {symbol}")
                 return pd.DataFrame()

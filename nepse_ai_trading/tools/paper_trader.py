@@ -926,6 +926,13 @@ class PaperTrader:
         except Exception:
             pass
         
+        # Get company details from NEPSE
+        company_details = None
+        try:
+            company_details = screener.fetcher.fetch_company_details(symbol)
+        except Exception:
+            pass
+        
         # Get price history for trend
         price_trend = "N/A"
         try:
@@ -940,6 +947,33 @@ class PaperTrader:
         except Exception:
             pass
         
+        # Get top broker holdings (for transparency)
+        top_brokers_data = []
+        broker_data_duration = "1W"  # Default to 1 week
+        try:
+            # Try 1W first (more relevant for swing trading)
+            broker_analysis = screener.sharehub.get_broker_analysis(symbol, duration="1W")
+            if broker_analysis:
+                # Sort by net buy (positive = accumulating)
+                top_brokers_data = sorted(
+                    broker_analysis, 
+                    key=lambda b: b.net_quantity, 
+                    reverse=True
+                )[:5]  # Top 5 brokers
+                broker_data_duration = "1W"
+            else:
+                # Fallback to 1D
+                broker_analysis = screener.sharehub.get_broker_analysis(symbol, duration="1D")
+                if broker_analysis:
+                    top_brokers_data = sorted(
+                        broker_analysis, 
+                        key=lambda b: b.net_quantity, 
+                        reverse=True
+                    )[:5]
+                    broker_data_duration = "1D"
+        except Exception as e:
+            logger.debug(f"Could not fetch broker analysis for {symbol}: {e}")
+        
         # ========== PRINT COMPREHENSIVE REPORT ==========
         value_result = results.get("value")
         momentum_result = results.get("momentum")
@@ -953,17 +987,178 @@ class PaperTrader:
             print(f"   ⚠️ NOTE: Using historical data from {data_source_info} (market closed)")
         print("═" * 70)
         
-        # Basic Info
+        # ========== ENHANCED HEADER WITH MARKET CONTEXT ==========
+        # Extract company details
+        company_name = best_result.company_name if hasattr(best_result, 'company_name') else symbol
+        sector = best_result.sector if hasattr(best_result, 'sector') else 'N/A'
+        
+        # Get company financial data from details
+        market_cap = 0
+        paid_up_capital = 0
+        outstanding_shares = 0
+        promoter_pct = 0
+        public_pct = 0
+        free_float_pct = 0
+        week_52_high = 0
+        week_52_low = 0
+        
+        if company_details:
+            market_cap = company_details.get('marketCapitalization', 0) / 10000000  # Convert to Crores
+            paid_up_capital = company_details.get('paidUpCapital', 0) / 10000000
+            outstanding_shares = company_details.get('stockListedShares', 0) / 10000000  # In Crores
+            promoter_pct = company_details.get('promoterPercentage', 0)
+            public_pct = company_details.get('publicPercentage', 0)
+            
+            # Free float is typically public % minus locked shares (estimate ~70% of public is tradeable)
+            free_float_pct = public_pct * 0.7 if public_pct > 0 else public_pct
+            
+            # Get 52W high/low from security details
+            daily_data = company_details.get('securityDailyTradeDto', {})
+            week_52_high = daily_data.get('fiftyTwoWeekHigh', 0)
+            week_52_low = daily_data.get('fiftyTwoWeekLow', 0)
+        
+        # Calculate daily turnover (in Crores)
+        daily_turnover = 0
+        if company_details:
+            daily_data = company_details.get('securityDailyTradeDto', {})
+            volume = daily_data.get('totalTradeQuantity', 0)
+            ltp = daily_data.get('lastTradedPrice', best_result.ltp)
+            daily_turnover = (volume * ltp) / 10000000  # Rs. in Crores
+        
+        # Market cap classification
+        if market_cap >= 5000:
+            cap_class = "Large-cap"
+            cap_emoji = "🟢"
+        elif market_cap >= 1000:
+            cap_class = "Mid-cap"
+            cap_emoji = "🟡"
+        else:
+            cap_class = "Small-cap"
+            cap_emoji = "🔴"
+        
+        # Liquidity score (0-10)
+        liquidity_score = 0
+        liquidity_label = "Very Low"
+        if daily_turnover > 50:
+            liquidity_score = 10
+            liquidity_label = "Excellent"
+        elif daily_turnover > 20:
+            liquidity_score = 8
+            liquidity_label = "Very Good"
+        elif daily_turnover > 10:
+            liquidity_score = 7
+            liquidity_label = "Good"
+        elif daily_turnover > 5:
+            liquidity_score = 6
+            liquidity_label = "Moderate"
+        elif daily_turnover > 2:
+            liquidity_score = 4
+            liquidity_label = "Low"
+        elif daily_turnover > 0.5:
+            liquidity_score = 2
+            liquidity_label = "Very Low"
+        
+        # Print enhanced header
         print(f"\n💰 CURRENT PRICE: Rs. {best_result.ltp:.2f}")
-        print(f"   Sector: {best_result.sector if hasattr(best_result, 'sector') else 'N/A'}")
+        print(f"   Sector: {sector}")
+        if market_cap > 0:
+            print(f"   Market Cap: Rs. {market_cap:,.0f} Cr ({cap_emoji} {cap_class})")
+        if free_float_pct > 0:
+            print(f"   Free Float: {free_float_pct:.1f}% | Daily Avg Turnover: Rs. {daily_turnover:.1f} Cr")
+        
+        # 52-week high/low context
+        if week_52_high > 0 and week_52_low > 0:
+            pct_from_high = ((best_result.ltp - week_52_high) / week_52_high * 100)
+            pct_from_low = ((best_result.ltp - week_52_low) / week_52_low * 100)
+            print(f"\n📈 PRICE LEVELS:")
+            print(f"   52W High: Rs. {week_52_high:.2f} ({pct_from_high:+.1f}% from peak)")
+            print(f"   52W Low:  Rs. {week_52_low:.2f} ({pct_from_low:+.1f}% from bottom)")
         
         # Price Trend
         if isinstance(price_trend, dict):
-            print(f"\n📈 PRICE TREND:")
+            print(f"\n📊 PRICE TREND:")
             print(f"   7 Days:  {price_trend.get('7d', 0):+.2f}%")
             print(f"   30 Days: {price_trend.get('30d', 0):+.2f}%")
             print(f"   90 Days: {price_trend.get('90d', 0):+.2f}%")
             print(f"   1 Year:  {price_trend.get('1y', 0):+.2f}%")
+        
+        # ========== COMBINED SUMMARY LINE ==========
+        # Determine overall verdict label based on best score
+        best_score = best_result.total_score if best_result else 0
+        if best_score >= 70:
+            overall_label = "GOOD"
+            overall_emoji = "🟢"
+        elif best_score >= 50:
+            overall_label = "FAIR"
+            overall_emoji = "🟡"
+        else:
+            overall_label = "WEAK"
+            overall_emoji = "🔴"
+        
+        # Get dump risk label
+        dump_risk = best_result.distribution_risk if best_result else "N/A"
+        dump_risk_labels = {
+            "LOW": "LOW (brokers not dumping yet)",
+            "MEDIUM": "MODERATE (ok only for short-term swing)",
+            "HIGH": "HIGH (brokers may dump; proceed with caution)",
+            "CRITICAL": "CRITICAL (active distribution; avoid)"
+        }
+        dump_label = dump_risk_labels.get(dump_risk, dump_risk)
+        
+        print("\n" + "═" * 70)
+        print(f"📋 SUMMARY: {overall_emoji} Overall: {overall_label} ({best_score:.0f}/100) | Dump Risk: {dump_label}")
+        print("═" * 70)
+        
+        # ========== COMPANY OVERVIEW SECTION ==========
+        if company_details:
+            print("\n" + "-" * 70)
+            print("🏢 COMPANY OVERVIEW")
+            print("-" * 70)
+            if paid_up_capital > 0:
+                print(f"   Paid-up Capital:    Rs. {paid_up_capital:,.0f} Cr")
+            if outstanding_shares > 0:
+                print(f"   Outstanding Shares: {outstanding_shares:.2f} Crore shares")
+            if promoter_pct > 0:
+                print(f"   Promoter Holding:   {promoter_pct:.0f}% | Public: {public_pct:.0f}%")
+                print(f"   Free Float:         {free_float_pct:.1f}% (tradeable by retail)")
+            
+            # Unlock Risk Section
+            unlock_info = best_result if hasattr(best_result, 'days_until_unlock') else None
+            if unlock_info and unlock_info.days_until_unlock > 0 and unlock_info.days_until_unlock <= 90:
+                print(f"\n   🔒 UNLOCK RISK:")
+                if unlock_info.days_until_unlock <= 30:
+                    risk_emoji = "🚨"
+                    risk_label = "HIGH RISK"
+                elif unlock_info.days_until_unlock <= 60:
+                    risk_emoji = "⚠️"
+                    risk_label = "MEDIUM RISK"
+                else:
+                    risk_emoji = "🟡"
+                    risk_label = "LOW RISK"
+                
+                print(f"      {risk_emoji} {risk_label} - Shares unlock in {unlock_info.days_until_unlock} days")
+                
+                if unlock_info.unlock_quantity > 0:
+                    unlock_value = unlock_info.unlock_quantity * best_result.ltp / 10000000  # in Crores
+                    print(f"      Expected selling pressure: ~Rs. {unlock_value:.0f} Cr worth")
+                
+                print(f"      💡 Historical pattern: Unlocks typically cause 5-15% price drops")
+                print(f"         Monitor carefully and consider reducing position before unlock date.")
+            elif unlock_info and unlock_info.days_until_unlock > 0:
+                print(f"\n   ✅ UNLOCK RISK: LOW - Next unlock in {unlock_info.days_until_unlock} days")
+            else:
+                print(f"\n   ✅ UNLOCK RISK: NONE - No unlocks scheduled in next 90 days")
+            
+            # Liquidity Analysis
+            print(f"\n   💧 LIQUIDITY ANALYSIS:")
+            print(f"      Daily Avg Turnover: Rs. {daily_turnover:.1f} Cr")
+            print(f"      Liquidity Score:    {liquidity_score}/10 ({liquidity_label})")
+            
+            if liquidity_score <= 4:
+                print(f"      ⚠️ Warning: Low liquidity. Large orders may move price significantly.")
+                print(f"         Exit strategy is crucial - may take multiple days to sell.")
+            elif liquidity_score >= 8:
+                print(f"      ✅ Good liquidity. Easy to enter and exit positions.")
         
         # Strategy Comparison
         print("\n" + "-" * 70)
@@ -1020,7 +1215,24 @@ class PaperTrader:
             print(f"   {eps_label}:   Rs. {eps_display:.2f}" + (" ❌ NEGATIVE" if eps_display <= 0 else f" ({fundamentals.quarter.upper()})"))
             print(f"   Book Value:  Rs. {fundamentals.book_value:.2f}")
             print(f"   PBV:         {fundamentals.pbv:.2f}" + (" ⚠️ HIGH" if fundamentals.pbv > 3 else " ✅ OK"))
-            print(f"   ROE:         {fundamentals.roe:.2f}%" + (" ✅ GOOD" if fundamentals.roe > 12 else " ⚠️ LOW" if fundamentals.roe < 5 else ""))
+            
+            # ROE with educational context
+            roe = fundamentals.roe
+            if roe > 15:
+                roe_status = " ✅ EXCELLENT"
+            elif roe > 10:
+                roe_status = " ✅ GOOD"
+            elif roe >= 5:
+                roe_status = " 🟡 AVERAGE"
+            else:
+                roe_status = " ⚠️ LOW"
+            print(f"   ROE:         {roe:.2f}%" + roe_status)
+            
+            # Educational tooltip for ROE
+            print(f"\n   💡 What is ROE? Return on Equity shows how efficiently company uses shareholder money.")
+            print(f"      >15% = Excellent | 10-15% = Good | 5-10% = Average | <5% = Poor")
+            if roe > 0:
+                print(f"      {company_name}'s {roe:.1f}% means Rs. 100 invested generates Rs. {roe:.1f} profit annually.")
         else:
             print("   Fundamental data not available")
         
@@ -1047,24 +1259,110 @@ class PaperTrader:
         
         # Distribution Risk
         print("\n" + "-" * 70)
-        print("📉 BROKER DISTRIBUTION RISK")
+        print("📉 BROKER DISTRIBUTION RISK (Smart Money Dump Indicator)")
         print("-" * 70)
         if best_result.distribution_risk:
-            risk_emoji = {"LOW": "✅", "MEDIUM": "⚡", "HIGH": "⚠️", "CRITICAL": "🚨"}.get(best_result.distribution_risk, "❓")
-            print(f"   {risk_emoji} Risk Level: {best_result.distribution_risk}")
+            risk_emoji = {"LOW": "✅", "MEDIUM": "🟡", "HIGH": "⚠️", "CRITICAL": "🚨"}.get(best_result.distribution_risk, "❓")
+            print(f"   {risk_emoji} Dump Risk Level: {best_result.distribution_risk}")
             print(f"   Broker Avg Cost:    Rs. {best_result.broker_avg_cost:.2f}")
             print(f"   Current LTP:        Rs. {best_result.ltp:.2f}")
             print(f"   Broker Profit:      +{best_result.broker_profit_pct:.1f}%")
-            if best_result.distribution_warning:
+            
+            # Determine lookback period for context
+            lookback_text = "~1 month" if strategy == "momentum" and hasattr(best_result, 'intraday_dump_detected') else "recent period"
+            
+            # Enhanced explanation based on risk level
+            if best_result.distribution_risk in ["HIGH", "CRITICAL"]:
+                print()
+                print(f"   {risk_emoji} {best_result.distribution_risk} RISK: Distribution pattern detected!")
+                print()
+                print("   💡 Key Context:")
+                print(f"      • Brokers accumulated this position over {lookback_text}.")
+                print(f"      • Broker avg cost: Rs. {best_result.broker_avg_cost:.2f}")
+                
+                # Show intraday dump details if available
+                if getattr(best_result, 'intraday_dump_detected', False) and getattr(best_result, 'today_open_price', 0) > 0:
+                    open_price = best_result.today_open_price
+                    open_vs_broker = best_result.open_vs_broker_pct
+                    volume_spike = getattr(best_result, 'intraday_volume_spike', 0)
+                    close_vs_vwap = getattr(best_result, 'close_vs_vwap_pct', 0)
+                    
+                    print()
+                    print("   🚨 Today's Intraday Action:")
+                    print(f"      • Open price: Rs. {open_price:.2f} (+{open_vs_broker:.1f}% above broker avg)")
+                    if volume_spike > 0:
+                        print(f"      • Volume spike: {volume_spike:.2f}x of average daily volume")
+                    if getattr(best_result, 'today_vwap', 0) > 0:
+                        print(f"      • Close vs VWAP: {close_vs_vwap:.1f}% (below VWAP = selling pressure)")
+                    
+                    print()
+                    print("   ⚠️ Analysis:")
+                    print(f"      Smart money likely offloaded shares at open (Rs. {open_price:.2f}),")
+                    print(f"      then price drifted down to close at Rs. {best_result.ltp:.2f}.")
+                    print()
+                    print(f"      Even though final broker profit is only +{best_result.broker_profit_pct:.1f}%,")
+                    print("      the intraday dump pattern shows operators are reducing positions.")
+                    print()
+                    print("   🔴 Recommendation: Avoid momentum entry until clear re-accumulation appears.")
+                else:
+                    # No intraday data, but still HIGH risk from traditional broker profit check
+                    print()
+                    print("   ⚠️ Analysis:")
+                    print(f"      Brokers are sitting on +{best_result.broker_profit_pct:.1f}% profit.")
+                    if best_result.broker_profit_pct >= 15:
+                        print("      At this profit level, distribution risk is elevated.")
+                    print("      Watch for signs of selling pressure (high volume, price rejection).")
+                    
+            elif best_result.distribution_risk == "MEDIUM":
                 print(f"   {best_result.distribution_warning}")
+            else:  # LOW
+                print(f"   {best_result.distribution_warning}")
+            
+            # Add explanatory note
+            print()
+            print("   📌 Note: Dump Risk shows only smart-money dump likelihood.")
+            print("      It does NOT mean this is a good trade by itself.")
+            print("      Always follow the Overall Score + Strategy verdict.")
         else:
             print("   Distribution risk data not available")
+        
+        # ========== TOP BROKER HOLDINGS (Smart Money Flow) ==========
+        print("\n" + "-" * 70)
+        print(f"🏦 TOP BROKER ACTIVITY ({broker_data_duration} data)")
+        print("-" * 70)
+        if top_brokers_data:
+            print("   Broker Code | Broker Name                  | Net Qty   | Buy Qty   | Sell Qty")
+            print("   " + "-" * 75)
+            for broker in top_brokers_data:
+                net_emoji = "🟢" if broker.net_quantity > 0 else "🔴" if broker.net_quantity < 0 else "⚪"
+                broker_name = broker.broker_name[:28] if len(broker.broker_name) > 28 else broker.broker_name
+                print(f"   {net_emoji} {broker.broker_code:>6} | {broker_name:<28} | {broker.net_quantity:>9,} | {broker.buy_quantity:>9,} | {broker.sell_quantity:>9,}")
+            
+            # Calculate totals
+            total_net = sum(b.net_quantity for b in top_brokers_data)
+            total_buy = sum(b.buy_quantity for b in top_brokers_data)
+            total_sell = sum(b.sell_quantity for b in top_brokers_data)
+            
+            print("   " + "-" * 75)
+            net_emoji = "🟢" if total_net > 0 else "🔴" if total_net < 0 else "⚪"
+            print(f"   {net_emoji} TOP 5 TOTAL:                              | {total_net:>9,} | {total_buy:>9,} | {total_sell:>9,}")
+            
+            if total_net > 0:
+                print(f"\n   ✅ Smart money ACCUMULATING: Top 5 brokers net +{total_net:,} shares")
+            elif total_net < 0:
+                print(f"\n   ⚠️ Smart money DISTRIBUTING: Top 5 brokers net {total_net:,} shares")
+            else:
+                print(f"\n   ⚪ Neutral: Top 5 brokers balanced buying/selling")
+        else:
+            print("   Broker activity data not available (requires ShareHub authentication)")
         
         # Technical Indicators
         print("\n" + "-" * 70)
         print("📊 TECHNICAL INDICATORS")
         print("-" * 70)
-        print(f"   RSI (14):      {best_result.rsi:.1f}" + (" ⚠️ OVERBOUGHT" if best_result.rsi > 70 else " ⚠️ OVERSOLD" if best_result.rsi < 30 else " ✅ NEUTRAL"))
+        rsi = best_result.rsi
+        rsi_status = " ⚠️ OVERBOUGHT" if rsi > 70 else " ⚠️ OVERSOLD" if rsi < 30 else " ✅ NEUTRAL"
+        print(f"   RSI (14):      {rsi:.1f}" + rsi_status)
         print(f"   EMA Signal:    {best_result.ema_signal}")
         print(f"   Volume Spike:  {best_result.volume_spike:.2f}x" + (" 🔥 HIGH" if best_result.volume_spike > 2 else ""))
         # ATR check - 0 means calculation failed
@@ -1073,15 +1371,44 @@ class PaperTrader:
         else:
             print(f"   ATR:           ❌ Could not calculate (insufficient data)")
         
-        # Trade Plan
+        # Educational tooltip for RSI
+        print(f"\n   💡 What is RSI? Relative Strength Index (0-100):")
+        print(f"      70-100 = Overbought (price may fall soon)")
+        print(f"      30-70  = Neutral range")
+        print(f"      0-30   = Oversold (price may bounce)")
+        print(f"      {company_name}'s RSI of {rsi:.1f} is {rsi_status.strip().replace('⚠️', '').replace('✅', '').strip()}")
+        
+        # Trade Plan - CONDITIONAL on dump risk and momentum score
         print("\n" + "-" * 70)
         print("🎯 SUGGESTED TRADE PLAN")
         print("-" * 70)
-        print(f"   Entry Price:   Rs. {best_result.entry_price_with_slippage:.2f} (with 1.5% slippage)")
-        print(f"   Target (+10%): Rs. {best_result.target_price:.2f}")
-        print(f"   Stop Loss:     Rs. {best_result.stop_loss_with_slippage:.2f} (-6.5% with slippage)")
-        print(f"   Expected Hold: {best_result.expected_holding_days}-{best_result.max_holding_days} days")
-        print(f"   Exit Strategy: {best_result.exit_strategy}")
+        
+        # Check if momentum entry should be blocked
+        dump_risk_level = best_result.distribution_risk
+        momentum_score_val = momentum_result.total_score if momentum_result else 0
+        should_block_entry = (dump_risk_level in ["HIGH", "CRITICAL"]) and (momentum_score_val <= 50)
+        
+        if should_block_entry:
+            # HIGH/CRITICAL dump risk + WEAK momentum = NO ENTRY
+            print(f"   ⚠️ NO MOMENTUM ENTRY RECOMMENDED TODAY")
+            print(f"   ")
+            print(f"   Reason: {dump_risk_level} distribution risk detected.")
+            if dump_risk_level == "CRITICAL":
+                print(f"   Operators are aggressively dumping shares.")
+            else:
+                print(f"   Operators likely distributed shares today.")
+            print(f"   ")
+            print(f"   🔴 ACTION: AVOID momentum entry until:")
+            print(f"      • Price stabilizes and re-accumulation is confirmed")
+            print(f"      • Distribution risk downgrades to MEDIUM or LOW")
+            print(f"      • Wait 1-2 sessions for dust to settle")
+        else:
+            # Normal case: Show trade plan
+            print(f"   Entry Price:   Rs. {best_result.entry_price_with_slippage:.2f} (with 1.5% slippage)")
+            print(f"   Target (+10%): Rs. {best_result.target_price:.2f}")
+            print(f"   Stop Loss:     Rs. {best_result.stop_loss_with_slippage:.2f} (-6.5% with slippage)")
+            print(f"   Expected Hold: {best_result.expected_holding_days}-{best_result.max_holding_days} days")
+            print(f"   Exit Strategy: {best_result.exit_strategy}")
         
         # Final Recommendation
         print("\n" + "═" * 70)
@@ -1146,7 +1473,13 @@ class PaperTrader:
             print(f"   Weak fundamentals. Avoid for long-term.")
         
         print(f"\n🚀 FOR SHORT-TERM SWING TRADE (1-2 weeks):")
-        if momentum_score >= 70 and not red_flags:
+        
+        # Block momentum entry if dump risk is HIGH/CRITICAL and momentum is WEAK
+        if should_block_entry:
+            print(f"   ❌ NOT RECOMMENDED - Score: {momentum_score:.0f}/100")
+            print(f"   {dump_risk_level} distribution risk. Operators dumped shares.")
+            print(f"   Wait for re-accumulation before entering momentum trade.")
+        elif momentum_score >= 70 and not red_flags:
             print(f"   ✅ RECOMMENDED - Score: {momentum_score:.0f}/100")
             print(f"   Good technicals. Entry: Rs.{best_result.entry_price_with_slippage:.2f}, Target: Rs.{best_result.target_price:.2f}")
         elif momentum_score >= 50:
@@ -1167,6 +1500,94 @@ class PaperTrader:
         else:
             print(f"   ❌ This does NOT look good right now.")
             print(f"   Score: {avg_score:.0f}/100. Ask your friend for their reasoning.")
+        
+        # ========== POSITION SIZING GUIDE BASED ON SCORE ==========
+        print("\n" + "-" * 70)
+        print("💼 POSITION SIZING GUIDE (Based on Overall Score)")
+        print("-" * 70)
+        if best_score < 50:
+            print("   🔴 Score < 50: AVOID / Paper trade only.")
+            print("      Do not risk real capital on this setup.")
+        elif best_score < 70:
+            print("   🟡 Score 50-69: Small position, short-term swing with tight stop.")
+            print("      Maximum 5% of portfolio. Exit quickly if stop is hit.")
+        else:
+            print("   🟢 Score ≥ 70: Normal position size allowed if risk rules are met.")
+            print("      Up to 10% of portfolio. Follow the suggested target/stop.")
+        
+        # ========== EDUCATIONAL TIP SECTION ==========
+        print("\n" + "-" * 70)
+        print("🎓 EDUCATIONAL TIP (For Non-Technical Investors)")
+        print("-" * 70)
+        
+        # Provide context based on today's situation
+        if should_block_entry and dump_risk_level == "HIGH":
+            print("   Today's Analysis Shows: \"Sunday Dump Pattern\"")
+            print()
+            print("   What happened?")
+            print("   1. Operators bought shares over ~1 month at lower prices")
+            if hasattr(best_result, 'broker_avg_cost') and best_result.broker_avg_cost > 0:
+                print(f"   2. Their average cost was Rs. {best_result.broker_avg_cost:.2f}")
+            if hasattr(best_result, 'today_open_price') and best_result.today_open_price > 0:
+                print(f"   3. On Sunday, they pumped price to Rs. {best_result.today_open_price:.2f} at market open")
+                print(f"   4. Retail traders saw \"momentum\" and bought at Rs. {best_result.today_open_price - 5:.2f}-{best_result.today_open_price:.2f}")
+                print(f"   5. Operators dumped their holdings at Rs. {best_result.today_open_price:.2f}")
+            print(f"   6. Price crashed to Rs. {best_result.ltp:.2f} by close")
+            print()
+            print("   Lesson: When broker avg is low, open spikes high, and volume jumps 2x:")
+            print("          → Operators are SELLING, not buying")
+            print("          → Avoid entering on such days")
+            print("          → Wait 1-2 sessions for dust to settle")
+            print()
+            print("   This is why the system flagged it as HIGH RISK and blocked entry.")
+        
+        elif best_score >= 70:
+            print("   Today's Analysis Shows: \"Good Opportunity\"")
+            print()
+            print("   What makes this a good pick?")
+            print(f"   • Score: {best_score:.0f}/100 (above 70 = strong setup)")
+            print(f"   • Dump Risk: {dump_risk} (operators not actively selling)")
+            if fundamentals and fundamentals.roe > 12:
+                print(f"   • ROE: {fundamentals.roe:.1f}% (company is profitable)")
+            if best_result.rsi < 65:
+                print(f"   • RSI: {best_result.rsi:.1f} (not overbought yet)")
+            print()
+            print("   Investment Approach:")
+            print("   • For long-term: Consider accumulating on dips")
+            print("   • For short-term: Follow the trade plan with stop loss")
+            print(f"   • Position size: {5 if best_score < 80 else 10}% of portfolio maximum")
+        
+        elif best_score < 50:
+            print("   Today's Analysis Shows: \"Weak Setup - Avoid\"")
+            print()
+            print("   Why is this risky?")
+            if best_score < 40:
+                print(f"   • Score: {best_score:.0f}/100 (below 40 = very weak)")
+            else:
+                print(f"   • Score: {best_score:.0f}/100 (below 50 = weak setup)")
+            
+            if dump_risk in ["HIGH", "CRITICAL"]:
+                print(f"   • Dump Risk: {dump_risk} (operators may be selling)")
+            if fundamentals and fundamentals.roe < 5:
+                print(f"   • ROE: {fundamentals.roe:.1f}% (low profitability)")
+            if best_result.rsi > 70:
+                print(f"   • RSI: {best_result.rsi:.1f} (overbought)")
+            print()
+            print("   Better Strategy:")
+            print("   • Wait for better entry signals")
+            print("   • Look for alternative stocks in same sector")
+            print("   • If you already own shares, consider profit-taking")
+        
+        else:
+            print("   Today's Analysis Shows: \"Average Setup - Proceed with Caution\"")
+            print()
+            print(f"   Score: {best_score:.0f}/100 (50-70 = moderate)")
+            print()
+            print("   Trading Approach:")
+            print("   • Only trade with tight stop loss (6-7%)")
+            print("   • Keep position size small (3-5% of portfolio)")
+            print("   • Monitor daily for any deterioration in signals")
+            print("   • Be ready to exit if dump risk increases")
         
         print("\n" + "═" * 70)
         print("⚠️ DISCLAIMER: This is algorithmic analysis, NOT financial advice.")

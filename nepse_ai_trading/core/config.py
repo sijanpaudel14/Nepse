@@ -3,9 +3,26 @@ Centralized configuration management using Pydantic Settings.
 All environment variables are loaded and validated here.
 """
 
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Find .env file - check current directory and parent directories
+def _find_env_file() -> Optional[str]:
+    """Find .env file in current directory or parent directories."""
+    current = Path.cwd()
+    # Check current and up to 3 parent levels
+    for _ in range(4):
+        env_path = current / ".env"
+        if env_path.exists():
+            return str(env_path)
+        parent = current.parent
+        if parent == current:  # Reached root
+            break
+        current = parent
+    return ".env"  # Fallback to default
 
 
 class Settings(BaseSettings):
@@ -15,7 +32,7 @@ class Settings(BaseSettings):
     """
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_find_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

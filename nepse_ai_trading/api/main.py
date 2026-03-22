@@ -57,10 +57,12 @@ app = FastAPI(
 from api.routes.analysis import router as analysis_router
 from api.routes.stocks import router as stocks_router
 from api.routes.signals import router as signals_router
+from api.routes.saas import router as saas_router
 
 app.include_router(analysis_router)
 app.include_router(stocks_router)
 app.include_router(signals_router)
+app.include_router(saas_router)  # SaaS endpoints for Next.js frontend
 
 # Mount static files
 if STATIC_DIR.exists():
@@ -69,10 +71,15 @@ if STATIC_DIR.exists():
 # Templates
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.exists() else None
 
-# CORS middleware (allow all for now, restrict in production)
+# CORS middleware - Allow Next.js dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=[
+        "http://localhost:3000",  # Next.js dev server
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",  # FastAPI docs
+        "*",  # TODO: Restrict in production to your domain
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
