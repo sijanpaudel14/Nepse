@@ -8,4 +8,7 @@ nepse_ai_trading/.venv312
 nepse_ai_trading/.venv312/*
 nepse-saas-frontend/node_modules
 node_modules/
-
+nepse_ai_trading/analysis/__pycache__
+nepse_ai_trading/api/__pycache__
+**/__pycache__/
+*.pyc
