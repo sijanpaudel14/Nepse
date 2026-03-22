@@ -1016,10 +1016,18 @@ class PaperTrader:
         
         # If not rejected, check for green signal
         if signal != "REJECT":
-            if best_score_preview >= 70 and dump_risk_preview == "LOW":
-                signal = "BUY"
-                signal_emoji = "🟢"
-                signal_reason = [f"score {best_score_preview:.0f}/100", "low dump risk"]
+            if momentum_score_preview >= 70 and dump_risk_preview == "LOW":
+                if value_score_preview >= 70:
+                    signal = "BUY"
+                    signal_emoji = "🟢"
+                    signal_reason = [f"score {best_score_preview:.0f}/100", "low dump risk"]
+                else:
+                    signal = "SHORT-TERM RISKY, LONG-TERM NEUTRAL"
+                    signal_emoji = "🟡"
+                    signal_reason = [
+                        f"momentum {momentum_score_preview:.0f}/100",
+                        f"value {value_score_preview:.0f}/100",
+                    ]
             elif best_score_preview >= 60:
                 signal = "CAUTION"
                 signal_emoji = "🟡"
