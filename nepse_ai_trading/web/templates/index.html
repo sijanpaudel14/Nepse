@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEPSE AI Trading Bot</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">
+            <span class="logo-icon">📈</span>
+            NEPSE AI Trading Bot
+        </div>
+        <div class="nav-links">
+            <a href="#" class="active">Dashboard</a>
+            <a href="#signals">Signals</a>
+            <a href="#portfolio">Portfolio</a>
+            <a href="/docs">API Docs</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        <!-- Market Summary -->
+        <section class="market-summary">
+            <div class="card">
+                <h3>NEPSE Index</h3>
+                <div class="value" id="nepse-index">Loading...</div>
+                <div class="change" id="nepse-change">--</div>
+            </div>
+            <div class="card">
+                <h3>Market Status</h3>
+                <div class="value" id="market-status">--</div>
+                <div class="breadth" id="market-breadth">↑ 0 &nbsp; ↓ 0 &nbsp; → 0</div>
+            </div>
+            <div class="card">
+                <h3>Portfolio Value</h3>
+                <div class="value" id="portfolio-value">Rs. 500,000</div>
+                <div class="change positive" id="portfolio-return">+8.25%</div>
+            </div>
+            <div class="card">
+                <h3>Active Signals</h3>
+                <div class="value" id="signal-count">0</div>
+                <div class="sub">Strong Buy: <span id="strong-buy-count">0</span></div>
+            </div>
+        </section>
+
+        <!-- Trading Signals -->
+        <section id="signals" class="signals-section">
+            <div class="section-header">
+                <h2>🎯 Today's Trading Signals</h2>
+                <button onclick="refreshSignals()" class="btn btn-primary">Refresh</button>
+            </div>
+            <div class="signals-grid" id="signals-container">
+                <div class="loading">Loading signals...</div>
+            </div>
+        </section>
+
+        <!-- Top Movers -->
+        <section class="movers-section">
+            <div class="row">
+                <div class="col">
+                    <h2>🟢 Top Gainers</h2>
+                    <div class="table-container" id="gainers-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>LTP</th>
+                                    <th>Change</th>
+                                </tr>
+                            </thead>
+                            <tbody id="gainers-table">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col">
+                    <h2>🔴 Top Losers</h2>
+                    <div class="table-container" id="losers-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>LTP</th>
+                                    <th>Change</th>
+                                </tr>
+                            </thead>
+                            <tbody id="losers-table">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Portfolio Section -->
+        <section id="portfolio" class="portfolio-section">
+            <h2>💼 Portfolio</h2>
+            <div class="portfolio-stats">
+                <div class="stat">
+                    <span class="label">Total Value</span>
+                    <span class="value" id="total-value">Rs. 500,000</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Cash</span>
+                    <span class="value" id="cash-value">Rs. 200,000</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Unrealized P&L</span>
+                    <span class="value positive" id="unrealized-pnl">+Rs. 15,000</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Realized P&L</span>
+                    <span class="value positive" id="realized-pnl">+Rs. 25,000</span>
+                </div>
+            </div>
+            <div class="positions-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Shares</th>
+                            <th>Entry</th>
+                            <th>Current</th>
+                            <th>P&L</th>
+                            <th>% Change</th>
+                            <th>Days</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-table">
+                        <tr>
+                            <td colspan="7" class="loading">Loading positions...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>NEPSE AI Trading Bot v1.0 | Not Financial Advice | Use at Your Own Risk</p>
+    </footer>
+
+    <script>
+        // API Base URL
+        const API_BASE = '';
+
+        // Format number as currency
+        function formatCurrency(value) {
+            return 'Rs. ' + value.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+        }
+
+        // Format percentage
+        function formatPercent(value) {
+            const sign = value >= 0 ? '+' : '';
+            return sign + value.toFixed(2) + '%';
+        }
+
+        // Load market summary
+        async function loadMarketSummary() {
+            try {
+                const res = await fetch(API_BASE + '/api/market/summary');
+                const data = await res.json();
+                
+                document.getElementById('nepse-index').textContent = 
+                    data.nepse_index ? data.nepse_index.toFixed(2) : '--';
+                
+                const changeEl = document.getElementById('nepse-change');
+                if (data.change_pct !== null) {
+                    const sign = data.change_pct >= 0 ? '+' : '';
+                    changeEl.textContent = `${sign}${data.change.toFixed(2)} (${sign}${data.change_pct.toFixed(2)}%)`;
+                    changeEl.className = 'change ' + (data.change_pct >= 0 ? 'positive' : 'negative');
+                }
+                
+                document.getElementById('market-status').textContent = 
+                    data.is_open ? '🟢 OPEN' : '🔴 CLOSED';
+                
+                document.getElementById('market-breadth').textContent = 
+                    `↑ ${data.advances}  ↓ ${data.declines}  → ${data.unchanged}`;
+                    
+            } catch (err) {
+                console.error('Failed to load market summary:', err);
+            }
+        }
+
+        // Load trading signals
+        async function loadSignals() {
+            try {
+                const res = await fetch(API_BASE + '/api/signals?min_confidence=50');
+                const signals = await res.json();
+                
+                const container = document.getElementById('signals-container');
+                
+                if (signals.length === 0) {
+                    container.innerHTML = '<div class="no-signals">No signals found. Market may be closed.</div>';
+                    return;
+                }
+                
+                document.getElementById('signal-count').textContent = signals.length;
+                
+                const strongBuys = signals.filter(s => s.signal_type === 'STRONG_BUY').length;
+                document.getElementById('strong-buy-count').textContent = strongBuys;
+                
+                container.innerHTML = signals.map(signal => `
+                    <div class="signal-card ${signal.signal_type.toLowerCase()}">
+                        <div class="signal-header">
+                            <span class="symbol">${signal.symbol}</span>
+                            <span class="signal-type ${signal.signal_type.toLowerCase()}">${signal.signal_type}</span>
+                        </div>
+                        <div class="signal-body">
+                            <div class="confidence">
+                                <div class="confidence-bar" style="width: ${signal.confidence}%"></div>
+                                <span>${signal.confidence.toFixed(0)}% Confidence</span>
+                            </div>
+                            <div class="prices">
+                                <div class="price entry">Entry: ${formatCurrency(signal.entry_price)}</div>
+                                <div class="price target">Target: ${formatCurrency(signal.target_price)}</div>
+                                <div class="price stop">Stop: ${formatCurrency(signal.stop_loss)}</div>
+                            </div>
+                            <div class="strategies">
+                                ${signal.strategies.map(s => `<span class="strategy-tag">${s}</span>`).join('')}
+                            </div>
+                            ${signal.ai_verdict ? `<div class="ai-verdict">${signal.ai_verdict}</div>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+                
+            } catch (err) {
+                console.error('Failed to load signals:', err);
+                document.getElementById('signals-container').innerHTML = 
+                    '<div class="error">Failed to load signals. API may be down.</div>';
+            }
+        }
+
+        // Load top gainers
+        async function loadGainers() {
+            try {
+                const res = await fetch(API_BASE + '/api/market/top-gainers?limit=5');
+                const data = await res.json();
+                
+                const tbody = document.getElementById('gainers-table');
+                tbody.innerHTML = data.data.map(stock => `
+                    <tr>
+                        <td>${stock.symbol}</td>
+                        <td>${formatCurrency(stock.ltp)}</td>
+                        <td class="positive">${formatPercent(stock.change_pct)}</td>
+                    </tr>
+                `).join('');
+                
+            } catch (err) {
+                console.error('Failed to load gainers:', err);
+            }
+        }
+
+        // Load top losers
+        async function loadLosers() {
+            try {
+                const res = await fetch(API_BASE + '/api/market/top-losers?limit=5');
+                const data = await res.json();
+                
+                const tbody = document.getElementById('losers-table');
+                tbody.innerHTML = data.data.map(stock => `
+                    <tr>
+                        <td>${stock.symbol}</td>
+                        <td>${formatCurrency(stock.ltp)}</td>
+                        <td class="negative">${formatPercent(stock.change_pct)}</td>
+                    </tr>
+                `).join('');
+                
+            } catch (err) {
+                console.error('Failed to load losers:', err);
+            }
+        }
+
+        // Load portfolio
+        async function loadPortfolio() {
+            try {
+                const res = await fetch(API_BASE + '/api/portfolio');
+                const data = await res.json();
+                
+                document.getElementById('total-value').textContent = formatCurrency(data.total_value);
+                document.getElementById('cash-value').textContent = formatCurrency(data.cash);
+                
+                const unrealizedEl = document.getElementById('unrealized-pnl');
+                unrealizedEl.textContent = (data.unrealized_pnl >= 0 ? '+' : '') + formatCurrency(data.unrealized_pnl);
+                unrealizedEl.className = 'value ' + (data.unrealized_pnl >= 0 ? 'positive' : 'negative');
+                
+                document.getElementById('portfolio-value').textContent = formatCurrency(data.total_value);
+                document.getElementById('portfolio-return').textContent = formatPercent(data.total_return_pct);
+                
+                // Load positions
+                const posRes = await fetch(API_BASE + '/api/portfolio/positions');
+                const positions = await posRes.json();
+                
+                const tbody = document.getElementById('positions-table');
+                if (positions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="no-data">No open positions</td></tr>';
+                } else {
+                    tbody.innerHTML = positions.map(pos => `
+                        <tr>
+                            <td><strong>${pos.symbol}</strong></td>
+                            <td>${pos.shares}</td>
+                            <td>${formatCurrency(pos.entry_price)}</td>
+                            <td>${formatCurrency(pos.current_price)}</td>
+                            <td class="${pos.unrealized_pnl >= 0 ? 'positive' : 'negative'}">
+                                ${(pos.unrealized_pnl >= 0 ? '+' : '') + formatCurrency(pos.unrealized_pnl)}
+                            </td>
+                            <td class="${pos.pnl_pct >= 0 ? 'positive' : 'negative'}">
+                                ${formatPercent(pos.pnl_pct)}
+                            </td>
+                            <td>${pos.holding_days}</td>
+                        </tr>
+                    `).join('');
+                }
+                
+            } catch (err) {
+                console.error('Failed to load portfolio:', err);
+            }
+        }
+
+        // Refresh signals
+        async function refreshSignals() {
+            document.getElementById('signals-container').innerHTML = '<div class="loading">Scanning market...</div>';
+            
+            // Trigger scan
+            await fetch(API_BASE + '/api/signals/scan', { method: 'POST' });
+            
+            // Wait a bit and reload
+            setTimeout(loadSignals, 3000);
+        }
+
+        // Initial load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadMarketSummary();
+            loadSignals();
+            loadGainers();
+            loadLosers();
+            loadPortfolio();
+            
+            // Refresh every 60 seconds during market hours
+            setInterval(() => {
+                loadMarketSummary();
+                loadGainers();
+                loadLosers();
+            }, 60000);
+        });
+    </script>
+</body>
+</html>

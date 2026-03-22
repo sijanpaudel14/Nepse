@@ -1,0 +1,61 @@
+# NEPSE AI Trading Bot - Docker Compose
+# Complete stack: API, Database, Scheduler
+
+version: '3.8'
+
+services:
+  # Main API Server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nepse-bot-api
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - DATABASE_URL=sqlite:///./data/nepse.db
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - nepse-network
+
+  # Scheduler (runs daily market scans)
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nepse-bot-scheduler
+    command: ["python", "main.py", "--schedule"]
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - DATABASE_URL=sqlite:///./data/nepse.db
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - nepse-network
+
+networks:
+  nepse-network:
+    driver: bridge
+
+volumes:
+  data:
+  logs:
