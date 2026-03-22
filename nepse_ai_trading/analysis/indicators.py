@@ -14,7 +14,7 @@ WHY THESE INDICATORS?
 - Volume: Confirms price moves. High volume = institutional participation.
 """
 
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
@@ -444,6 +444,111 @@ class TechnicalIndicators:
         }
 
 
+def safe_ema(prices, period: int = 21) -> Optional[float]:
+    """
+    Return latest EMA value safely.
+
+    Returns None when data is insufficient or invalid.
+    """
+    try:
+        price_series = pd.Series(prices, dtype="float64").replace([np.inf, -np.inf], np.nan).dropna()
+        if len(price_series) < max(2, period):
+            return None
+        ema_series = ta.ema(price_series, length=period)
+        if ema_series is None or ema_series.empty:
+            return None
+        latest = ema_series.iloc[-1]
+        return float(latest) if pd.notna(latest) else None
+    except Exception as e:
+        logger.debug(f"safe_ema failed: {e}")
+        return None
+
+
+def safe_rsi(prices, period: int = 14) -> Optional[float]:
+    """
+    Return latest RSI value safely.
+
+    Returns None when data is insufficient or invalid.
+    """
+    try:
+        price_series = pd.Series(prices, dtype="float64").replace([np.inf, -np.inf], np.nan).dropna()
+        if len(price_series) < period + 1:
+            return None
+        rsi_series = ta.rsi(price_series, length=period)
+        if rsi_series is None or rsi_series.empty:
+            return None
+        latest = rsi_series.iloc[-1]
+        return float(latest) if pd.notna(latest) else None
+    except Exception as e:
+        logger.debug(f"safe_rsi failed: {e}")
+        return None
+
+
+def safe_vwap(ohlcv: pd.DataFrame) -> Optional[float]:
+    """
+    Return VWAP from OHLCV data safely.
+
+    Uses Typical Price * Volume / Volume. Returns None on zero/invalid volume.
+    """
+    try:
+        if ohlcv is None or ohlcv.empty:
+            return None
+        required = {"high", "low", "close", "volume"}
+        if not required.issubset(set(ohlcv.columns)):
+            return None
+
+        high = pd.to_numeric(ohlcv["high"], errors="coerce")
+        low = pd.to_numeric(ohlcv["low"], errors="coerce")
+        close = pd.to_numeric(ohlcv["close"], errors="coerce")
+        volume = pd.to_numeric(ohlcv["volume"], errors="coerce").fillna(0)
+
+        valid_mask = high.notna() & low.notna() & close.notna() & (volume >= 0)
+        if not valid_mask.any():
+            return None
+
+        typical_price = (high[valid_mask] + low[valid_mask] + close[valid_mask]) / 3
+        weighted = typical_price * volume[valid_mask]
+        total_volume = float(volume[valid_mask].sum())
+        if total_volume <= 0:
+            return None
+        return float(weighted.sum() / total_volume)
+    except Exception as e:
+        logger.debug(f"safe_vwap failed: {e}")
+        return None
+
+
+def safe_support_resistance(prices: pd.DataFrame, days: int = 30) -> Optional[Dict[str, List[float]]]:
+    """
+    Return support/resistance safely for short NEPSE histories.
+
+    Returns None if data is not sufficient to produce meaningful levels.
+    """
+    try:
+        if prices is None or prices.empty:
+            return None
+        required = {"high", "low"}
+        if not required.issubset(set(prices.columns)):
+            return None
+        if len(prices) < max(10, days):
+            return None
+
+        analysis_df = prices.tail(days).copy()
+        analysis_df["high"] = pd.to_numeric(analysis_df["high"], errors="coerce")
+        analysis_df["low"] = pd.to_numeric(analysis_df["low"], errors="coerce")
+        analysis_df = analysis_df.dropna(subset=["high", "low"])
+        if len(analysis_df) < 10:
+            return None
+
+        window = min(10, max(3, len(analysis_df) // 4))
+        supports, resistances = calculate_support_resistance(analysis_df, window=window)
+        if not supports and not resistances:
+            return None
+        return {"support": [float(x) for x in supports], "resistance": [float(x) for x in resistances]}
+    except Exception as e:
+        logger.debug(f"safe_support_resistance failed: {e}")
+        return None
+
+
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convenience function to calculate all indicators.
@@ -475,6 +580,11 @@ def calculate_support_resistance(
     Returns:
         Tuple of (support_levels, resistance_levels)
     """
+    if df is None or df.empty or "high" not in df.columns or "low" not in df.columns:
+        return [], []
+    if len(df) < (window * 2 + 1):
+        return [], []
+
     # Find pivot highs (local maxima)
     highs = df["high"].values
     pivot_highs = []

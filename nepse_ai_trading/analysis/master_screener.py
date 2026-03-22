@@ -36,7 +36,7 @@ import asyncio
 
 from data.fetcher import NepseFetcher
 from data.sharehub_api import ShareHubAPI
-from analysis.indicators import TechnicalIndicators
+from analysis.indicators import TechnicalIndicators, safe_vwap
 from core.config import settings
 
 # News Scraper & AI Advisor (optional - for enhanced analysis)
@@ -2038,6 +2038,17 @@ class MasterStockScreener:
         result.eps = fund_data.get("eps", 0)
         result.roe = fund_data.get("roe", 0)
         result.one_year_yield = fund_data.get("yield_1y", 0)
+
+        # Hard cap fundamentals for loss-making names in momentum mode.
+        if self.strategy == "momentum" and result.eps <= 0:
+            if result.pillar3_fundamental > 0:
+                logger.warning(
+                    f"{symbol}: Momentum fundamental pillar capped to 0 due to non-positive EPS ({result.eps:.2f})"
+                )
+            result.pillar3_fundamental = 0.0
+            result.breakdown.fundamental_score = 0.0
+            if "🔴 EPS hard veto applied (pillar capped to 0)" not in result.breakdown.fundamental_reasons:
+                result.breakdown.fundamental_reasons.append("🔴 EPS hard veto applied (pillar capped to 0)")
         
         # ===== PILLAR 4: TECHNICAL & MOMENTUM =====
         p4_score, p4_reasons, tech_data = self._score_pillar4_technical(symbol, stock, max_score=max_tech)
@@ -2336,7 +2347,8 @@ class MasterStockScreener:
             risk_level = dist_risk.get("risk_level", "LOW")
             penalty = dist_risk.get("penalty", 0)
             profit_pct = dist_risk.get("profit_pct", 0)
-            warning = dist_risk.get("warning", "")
+            close_vs_vwap_pct = float(dist_risk.get("close_vs_vwap_pct", 0) or 0)
+            open_vs_broker_pct = float(dist_risk.get("open_vs_broker_pct", 0) or 0)
             
             if penalty < 0:
                 score += penalty  # Negative penalty reduces score
@@ -2346,6 +2358,11 @@ class MasterStockScreener:
                 bonus = 3.0
                 score += bonus
                 reasons.append(f"📈 Accumulation Phase: Brokers only +{profit_pct:.1f}% (+{bonus:.0f})")
+
+            # VWAP rejection penalty: open pump + close below VWAP is a broker-distribution red flag.
+            if open_vs_broker_pct >= 5 and close_vs_vwap_pct < 0:
+                score -= 3.0
+                reasons.append("🔴 VWAP rejection after open pump (-3.0)")
         
         # Cap at max_score (floor at -20 for extreme distribution cases)
         score = max(-20, min(max_score, score))
@@ -2627,7 +2644,7 @@ class MasterStockScreener:
         try:
             # Fetch 365-day price history (1 year) for accurate 52-week High & Long-term Trends
             # We need enough data for EMA200 and true Blue Sky Breakouts
-            df = self.fetcher.fetch_price_history(symbol, days=400)
+            df = self.fetcher.safe_fetch_data(symbol, days=400, min_rows=21)
             
             if df is None or len(df) < 21:
                 # Fallback to basic scoring from current data
@@ -2706,9 +2723,10 @@ class MasterStockScreener:
                 # rsi_score = 10 - abs(60 - rsi) * 0.2
                 # But penalize OVERBOUGHT (>75) heavily
                 
-                if rsi > 75:
-                    score -= 5.0
-                    reasons.append(f"🔴 RSI {rsi:.1f} EXTREME OVERBOUGHT (-5.0)")
+                if rsi > 70:
+                    overbought_penalty = min(10.0, 5.0 + max(0.0, (rsi - 70.0) * 0.25))
+                    score -= overbought_penalty
+                    reasons.append(f"🔴 RSI {rsi:.1f} OVERBOUGHT (-{overbought_penalty:.1f})")
                 else:
                     rsi_score = max(0.0, 10.0 - abs(60.0 - rsi) * 0.2)
                     score += rsi_score
@@ -2953,6 +2971,76 @@ class MasterStockScreener:
             parts.append(" | " + " + ".join(highlights))
         
         return "".join(parts)
+
+    def dual_timeframe_validation(self, stock_data) -> Dict:
+        """
+        Dual-timeframe hard-veto validation for momentum entries.
+
+        Rules:
+        1) 1M baseline must show net accumulation (>0)
+        2) 1W fine-tune must not show net distribution when 1M is accumulating
+        3) Hard veto if RSI > 70, EPS <= 0, ROE <= 0
+        4) Hard veto on heavy dump day or >10% premium vs 14D VWAP
+        """
+        symbol = getattr(stock_data, "symbol", "") or ""
+        ltp = float(getattr(stock_data, "ltp", 0) or 0)
+        net_1m = int(getattr(stock_data, "net_holdings_1m", 0) or 0)
+        net_1w = int(getattr(stock_data, "net_holdings_1w", 0) or 0)
+        rsi = float(getattr(stock_data, "rsi", 0) or 0)
+        eps = float(getattr(stock_data, "eps", 0) or 0)
+        roe = float(getattr(stock_data, "roe", 0) or 0)
+        intraday_dump = bool(getattr(stock_data, "intraday_dump_detected", False))
+        open_vs_broker_pct = float(getattr(stock_data, "open_vs_broker_pct", 0) or 0)
+        close_vs_vwap_pct = float(getattr(stock_data, "close_vs_vwap_pct", 0) or 0)
+
+        veto_reasons: List[str] = []
+
+        # Rule 1: 1M baseline trend
+        if net_1m <= 0:
+            veto_reasons.append(f"No 1M accumulation ({net_1m:+,} shares)")
+
+        # Rule 2: 1W fine-tune
+        if net_1m > 0 and net_1w <= 0:
+            veto_reasons.append(f"1W distribution against 1M trend ({net_1w:+,} shares)")
+
+        # Hard veto: momentum/fundamentals
+        if rsi > 70:
+            veto_reasons.append(f"RSI overbought ({rsi:.1f})")
+        if eps <= 0:
+            veto_reasons.append(f"Negative EPS (Rs. {eps:.2f})")
+        if roe <= 0:
+            veto_reasons.append(f"Weak/Negative ROE ({roe:.1f}%)")
+
+        # Hard veto: heavy dump day
+        if intraday_dump or (open_vs_broker_pct >= 5.0 and close_vs_vwap_pct < 0):
+            veto_reasons.append("Heavy dump day pattern (open spike + close<VWAP)")
+
+        # Hard veto: >10% premium vs 14D VWAP
+        vwap_14d = None
+        vwap_premium_pct = 0.0
+        if symbol and ltp > 0:
+            try:
+                hist = self.fetcher.safe_fetch_data(symbol, days=20, min_rows=5)
+                if not hist.empty:
+                    vwap_14d = safe_vwap(hist.tail(14))
+                    if vwap_14d and vwap_14d > 0:
+                        vwap_premium_pct = ((ltp / vwap_14d) - 1) * 100
+                        if vwap_premium_pct > 10:
+                            veto_reasons.append(f"VWAP premium too high (+{vwap_premium_pct:.1f}%)")
+                    else:
+                        veto_reasons.append("14D VWAP unavailable")
+            except Exception as e:
+                logger.warning(f"{symbol}: dual timeframe VWAP validation failed: {e}")
+                veto_reasons.append("14D VWAP unavailable")
+
+        return {
+            "status": "PASS" if not veto_reasons else "VETOED",
+            "veto_reasons": veto_reasons,
+            "1m_net": net_1m,
+            "1w_net": net_1w,
+            "vwap_14d": round(vwap_14d, 2) if vwap_14d else 0.0,
+            "vwap_premium_pct": round(vwap_premium_pct, 2),
+        }
     
     def _get_recommendation(self, score: float) -> str:
         """Get recommendation based on total score."""

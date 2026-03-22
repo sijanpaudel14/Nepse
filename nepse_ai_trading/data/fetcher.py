@@ -221,6 +221,67 @@ class NepseFetcher:
         except Exception as e:
             logger.error(f"Failed to fetch history for {symbol}: {e}")
             raise NepseAPIError(f"Price history fetch failed: {e}")
+
+    def safe_fetch_data(self, symbol: str, days: int = 60, min_rows: int = 14) -> pd.DataFrame:
+        """
+        Fetch and validate OHLCV safely for indicator/scoring pipelines.
+
+        Handles common NEPSE issues:
+        - insufficient rows for indicators
+        - string/invalid numeric values
+        - missing OHLC fields
+        - zero-volume days and malformed OHLC relationships
+        """
+        symbol = symbol.upper().strip()
+        required_cols = ["date", "open", "high", "low", "close", "volume"]
+
+        def _validate(df: pd.DataFrame) -> pd.DataFrame:
+            if df is None or df.empty:
+                return pd.DataFrame(columns=required_cols)
+
+            for col in required_cols:
+                if col not in df.columns:
+                    logger.warning(f"{symbol}: missing required column '{col}' in price history")
+                    return pd.DataFrame(columns=required_cols)
+
+            cleaned = df.copy()
+            cleaned["date"] = pd.to_datetime(cleaned["date"], errors="coerce").dt.date
+            for col in ["open", "high", "low", "close", "volume"]:
+                cleaned[col] = pd.to_numeric(cleaned[col], errors="coerce")
+
+            # Keep rows with at least close; backfill missing OHLC from close.
+            cleaned = cleaned.dropna(subset=["close"])
+            cleaned["open"] = cleaned["open"].fillna(cleaned["close"])
+            cleaned["high"] = cleaned["high"].fillna(cleaned["close"])
+            cleaned["low"] = cleaned["low"].fillna(cleaned["close"])
+            cleaned["volume"] = cleaned["volume"].fillna(0).clip(lower=0)
+
+            # Repair OHLC relationships where APIs return broken values.
+            cleaned["high"] = cleaned[["high", "open", "close", "low"]].max(axis=1)
+            cleaned["low"] = cleaned[["low", "open", "close", "high"]].min(axis=1)
+
+            cleaned = cleaned.dropna(subset=["date"]).sort_values("date").drop_duplicates(subset=["date"], keep="last")
+            return cleaned.reset_index(drop=True)
+
+        try:
+            df = _validate(self.fetch_price_history(symbol, days=days))
+            if len(df) >= min_rows:
+                return df
+
+            fallback_days = max(days * 2, min_rows + 10)
+            logger.warning(
+                f"{symbol}: only {len(df)} rows from {days} days, retrying with {fallback_days} days for indicator safety"
+            )
+            fallback_df = _validate(self.fetch_price_history(symbol, days=fallback_days))
+
+            if len(fallback_df) < min_rows:
+                logger.warning(
+                    f"{symbol}: insufficient validated rows ({len(fallback_df)} < {min_rows}); returning best-effort data"
+                )
+            return fallback_df
+        except Exception as e:
+            logger.error(f"safe_fetch_data failed for {symbol}: {e}")
+            return pd.DataFrame(columns=required_cols)
     
     def fetch_index_history(self, days: int = 60) -> pd.DataFrame:
         """

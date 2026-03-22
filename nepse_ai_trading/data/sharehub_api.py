@@ -43,6 +43,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from loguru import logger
 
 # Load .env from current or parent directories
@@ -742,7 +743,29 @@ class ShareHubAPI:
 
     # ==================== FREE ENDPOINTS ====================
 
-    def _calculate_annualized_eps(self, quarter: str, net_profit: float, paidup_capital: float) -> float:
+    def _to_decimal_number(self, value: Any, default: Decimal = Decimal("0")) -> Decimal:
+        """Parse API numeric values to Decimal safely for financial math."""
+        if value is None:
+            return default
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, (int, float)):
+            # str() avoids binary float artifacts in Decimal constructor.
+            try:
+                return Decimal(str(value))
+            except InvalidOperation:
+                return default
+        if isinstance(value, str):
+            parsed = parse_nepse_number(value)
+            if parsed is None:
+                return default
+            try:
+                return Decimal(str(parsed))
+            except InvalidOperation:
+                return default
+        return default
+
+    def _calculate_annualized_eps(self, quarter: str, net_profit: Any, paidup_capital: Any) -> float:
         """
         Manually calculate Annualized EPS from raw financial data.
         
@@ -766,39 +789,42 @@ class ShareHubAPI:
                - q3: base_eps * (4/3) (3 quarters -> 4 quarters)
                - q4: base_eps * 1 (already full year)
         """
+        net_profit_d = self._to_decimal_number(net_profit)
+        paidup_capital_d = self._to_decimal_number(paidup_capital)
+
         # Guard against invalid inputs
-        if not paidup_capital or paidup_capital <= 0:
+        if paidup_capital_d <= 0:
             return 0.0
-        if net_profit is None:
+        if net_profit_d == 0:
             return 0.0
             
         # Calculate number of shares (par value = Rs. 100 in Nepal)
-        shares = paidup_capital / 100.0
+        shares = paidup_capital_d / Decimal("100")
         
         if shares <= 0:
             return 0.0
             
         # Calculate base EPS for the period
-        base_eps = net_profit / shares
+        base_eps = net_profit_d / shares
         
         # Annualization multipliers based on quarter
         quarter_multipliers = {
-            "q1": 4.0,      # 1 quarter -> 4 quarters
-            "q2": 2.0,      # 2 quarters -> 4 quarters  
-            "q3": 4.0/3.0,  # 3 quarters -> 4 quarters
-            "q4": 1.0,      # Already full year
+            "q1": Decimal("4"),      # 1 quarter -> 4 quarters
+            "q2": Decimal("2"),      # 2 quarters -> 4 quarters
+            "q3": Decimal("1.3333333333333333333333333333"),  # 4/3
+            "q4": Decimal("1"),      # Already full year
         }
         
         # Normalize quarter string (handle "Q1", "Q2", etc.)
         quarter_normalized = str(quarter).lower().strip()
         
         # Get multiplier (default to 1.0 if quarter not recognized)
-        multiplier = quarter_multipliers.get(quarter_normalized, 1.0)
+        multiplier = quarter_multipliers.get(quarter_normalized, Decimal("1"))
         
         # Calculate annualized EPS
         annualized_eps = base_eps * multiplier
         
-        return round(annualized_eps, 2)
+        return float(annualized_eps.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
     def get_fundamentals(self, symbol: str) -> ShareHubFundamentals:
         """
@@ -840,34 +866,34 @@ class ShareHubAPI:
                        for v in values if v.get("value") is not None}
 
         # Map to our fields
-        result.eps = values_dict.get("eps", 0) or 0
-        result.eps_annualized = values_dict.get("eps_a", 0) or 0
-        result.book_value = values_dict.get("net_worth", 0) or 0
-        result.roe = values_dict.get("roe", 0) or 0
-        result.roa = values_dict.get("roa", 0) or 0
-        result.net_profit = values_dict.get("net_profit", 0) or 0
-        result.operating_profit = values_dict.get("operating_profit", 0) or 0
-        result.dps = values_dict.get("dps", 0) or 0
+        result.eps = float(self._to_decimal_number(values_dict.get("eps", 0)))
+        result.eps_annualized = float(self._to_decimal_number(values_dict.get("eps_a", 0)))
+        result.book_value = float(self._to_decimal_number(values_dict.get("net_worth", 0)))
+        result.roe = float(self._to_decimal_number(values_dict.get("roe", 0)))
+        result.roa = float(self._to_decimal_number(values_dict.get("roa", 0)))
+        result.net_profit = float(self._to_decimal_number(values_dict.get("net_profit", 0)))
+        result.operating_profit = float(self._to_decimal_number(values_dict.get("operating_profit", 0)))
+        result.dps = float(self._to_decimal_number(values_dict.get("dps", 0)))
 
         # Banking specific
-        result.npl = values_dict.get("npl", 0) or 0
-        result.cd_ratio = values_dict.get("cd_ratio", 0) or 0
-        result.base_rate = values_dict.get("base_rate", 0) or 0
-        result.interest_spread = values_dict.get("interest_spread", 0) or 0
-        result.cost_of_fund = values_dict.get("cost_of_fund", 0) or 0
-        result.capital_adequacy = values_dict.get(
-            "capital_fund_to_rwa", 0) or 0
+        result.npl = float(self._to_decimal_number(values_dict.get("npl", 0)))
+        result.cd_ratio = float(self._to_decimal_number(values_dict.get("cd_ratio", 0)))
+        result.base_rate = float(self._to_decimal_number(values_dict.get("base_rate", 0)))
+        result.interest_spread = float(self._to_decimal_number(values_dict.get("interest_spread", 0)))
+        result.cost_of_fund = float(self._to_decimal_number(values_dict.get("cost_of_fund", 0)))
+        result.capital_adequacy = float(self._to_decimal_number(values_dict.get(
+            "capital_fund_to_rwa", 0)))
 
         # Capital
-        result.paid_up_capital = values_dict.get("paidup_capital", 0) or 0
-        result.reserve = values_dict.get("reserve", 0) or 0
-        result.retained_earnings = values_dict.get("retained_earning", 0) or 0
-        result.total_equity = values_dict.get("total_equity", 0) or 0
-        result.total_assets = values_dict.get("total_assets", 0) or 0
+        result.paid_up_capital = float(self._to_decimal_number(values_dict.get("paidup_capital", 0)))
+        result.reserve = float(self._to_decimal_number(values_dict.get("reserve", 0)))
+        result.retained_earnings = float(self._to_decimal_number(values_dict.get("retained_earning", 0)))
+        result.total_equity = float(self._to_decimal_number(values_dict.get("total_equity", 0)))
+        result.total_assets = float(self._to_decimal_number(values_dict.get("total_assets", 0)))
 
         # Loans
-        result.loan = values_dict.get("loan", 0) or 0
-        result.deposit = values_dict.get("deposit", 0) or 0
+        result.loan = float(self._to_decimal_number(values_dict.get("loan", 0)))
+        result.deposit = float(self._to_decimal_number(values_dict.get("deposit", 0)))
         
         # ===== MANUAL EPS CALCULATION (More reliable than API values) =====
         # NEPSE APIs sometimes have incorrect eps/eps_a values

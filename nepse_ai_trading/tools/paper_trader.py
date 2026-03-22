@@ -41,6 +41,7 @@ from loguru import logger
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from analysis.master_screener import MasterStockScreener, get_best_stocks, ScreenedStock
+from analysis.indicators import safe_rsi, safe_vwap
 from data.fetcher import NepseFetcher
 from data.sharehub_api import get_price_history_with_open
 
@@ -70,76 +71,95 @@ class PaperTrade:
 
 def classify_stock_risk(stock, screener=None) -> dict:
     """
-    Hard-veto validation after momentum scoring.
+    Risk classification with hard veto rules for momentum workflow.
 
-    Rules (for momentum >= 70):
-    - RSI must be 40-70
-    - EPS must be > 0
-    - ROE must be >= 0
-    - Price must be <= 10% above 14D VWAP
-    Any failed rule => VETOED (no auto real-money entry).
+    Classification (for momentum score >= 70):
+    - GOOD: all veto checks pass
+    - RISKY: exactly 1 veto reason
+    - VETO: 2+ veto reasons
     """
     score = float(getattr(stock, "total_score", 0) or 0)
     eps = float(getattr(stock, "eps", 0) or 0)
     roe = float(getattr(stock, "roe", 0) or 0)
     pe = float(getattr(stock, "pe_ratio", 0) or 0)
-    rsi = float(getattr(stock, "rsi", 50) or 50)
+    rsi = float(getattr(stock, "rsi", 0) or 0)
     current_price = float(getattr(stock, "ltp", 0) or 0)
 
-    veto_reasons = []
+    risk_reasons: List[str] = []
+    validation = {"status": "VETOED", "veto_reasons": [], "1m_net": 0, "1w_net": 0}
 
-    # Signal 1: RSI gate
+    # Dual-timeframe + hard-veto rules from screener (if available)
+    if screener and hasattr(screener, "dual_timeframe_validation"):
+        try:
+            validation = screener.dual_timeframe_validation(stock)
+            risk_reasons.extend(validation.get("veto_reasons", []))
+        except Exception as e:
+            logger.warning(f"Dual timeframe validation failed for {getattr(stock, 'symbol', 'UNKNOWN')}: {e}")
+            risk_reasons.append("Dual timeframe validation unavailable")
+
+    # Technical hard gates
+    if rsi <= 0 and screener:
+        try:
+            hist = screener.fetcher.safe_fetch_data(stock.symbol, days=30, min_rows=15)
+            rsi_fallback = safe_rsi(hist["close"], period=14) if not hist.empty else None
+            if rsi_fallback is not None:
+                rsi = float(rsi_fallback)
+        except Exception as e:
+            logger.debug(f"RSI fallback failed for {stock.symbol}: {e}")
     if rsi > 70:
-        veto_reasons.append(f"RSI overbought ({rsi:.1f})")
-    elif rsi < 40:
-        veto_reasons.append(f"RSI below momentum zone ({rsi:.1f})")
+        risk_reasons.append(f"RSI overbought ({rsi:.1f})")
+    elif 0 < rsi < 40:
+        risk_reasons.append(f"RSI below momentum zone ({rsi:.1f})")
 
-    # Signal 2: EPS gate
+    # Fundamental hard gates
     if eps <= 0:
-        veto_reasons.append(f"Negative EPS (Rs. {eps:.2f})")
+        risk_reasons.append(f"Negative EPS (Rs. {eps:.2f})")
+    if roe <= 0:
+        risk_reasons.append(f"Weak/Negative ROE ({roe:.1f}%)")
 
-    # Signal 3: ROE gate
-    if roe < 0:
-        veto_reasons.append(f"Negative ROE ({roe:.1f}%)")
-
-    # Signal 4: VWAP premium gate (14D)
+    # VWAP premium gate (14D)
     vwap_14d = None
+    vwap_premium_pct = 0.0
     if screener:
         try:
-            df = screener.fetcher.fetch_price_history(stock.symbol, days=20)
-            if df is not None and not df.empty and len(df) >= 5:
-                df = df.tail(14)
-                total_volume = float(df["volume"].sum())
-                if total_volume > 0:
-                    typical_price = (df["high"] + df["low"] + df["close"]) / 3
-                    vwap_14d = float((typical_price * df["volume"]).sum() / total_volume)
-        except Exception:
-            vwap_14d = None
+            hist = screener.fetcher.safe_fetch_data(stock.symbol, days=20, min_rows=5)
+            if not hist.empty:
+                vwap_14d = safe_vwap(hist.tail(14))
+        except Exception as e:
+            logger.warning(f"VWAP fetch failed for {stock.symbol}: {e}")
 
     if vwap_14d and vwap_14d > 0 and current_price > 0:
         vwap_premium_pct = ((current_price / vwap_14d) - 1) * 100
         if vwap_premium_pct > 10:
-            veto_reasons.append(f"Price overextended vs 14D VWAP (+{vwap_premium_pct:.1f}%)")
+            risk_reasons.append(f"Price overextended vs 14D VWAP (+{vwap_premium_pct:.1f}%)")
     else:
-        veto_reasons.append("14D VWAP unavailable")
-        vwap_premium_pct = 0.0
+        risk_reasons.append("14D VWAP unavailable")
+
+    # De-duplicate while preserving order
+    seen = set()
+    risk_reasons = [r for r in risk_reasons if not (r in seen or seen.add(r))]
 
     if score < 70:
         risk_tier = "NOT_QUALIFIED"
         entry_allowed = False
         position_guidance = "Not qualified for momentum setup"
-    elif veto_reasons:
-        risk_tier = "VETOED"
-        entry_allowed = False
-        position_guidance = "RISKY - paper-trade / 1% size only"
     else:
-        risk_tier = "GOOD"
-        entry_allowed = True
-        position_guidance = "GOOD - suitable for small-position real-trade"
+        if len(risk_reasons) == 0:
+            risk_tier = "GOOD"
+            entry_allowed = True
+            position_guidance = "GOOD: 3-5% portfolio"
+        elif len(risk_reasons) == 1:
+            risk_tier = "RISKY"
+            entry_allowed = False
+            position_guidance = "RISKY: 1-2% portfolio or paper-trade"
+        else:
+            risk_tier = "VETO"
+            entry_allowed = False
+            position_guidance = "VETO: Paper-trade only"
 
     return {
         "risk_tier": risk_tier,
-        "risk_reasons": veto_reasons,
+        "risk_reasons": risk_reasons,
         "position_guidance": position_guidance,
         "entry_allowed": entry_allowed,
         "is_ideal_setup": (risk_tier == "GOOD"),
@@ -149,7 +169,8 @@ def classify_stock_risk(stock, screener=None) -> dict:
         "pe": pe,
         "vwap_14d": vwap_14d or 0.0,
         "current_price": current_price,
-        "vwap_premium_pct": vwap_premium_pct if "vwap_premium_pct" in locals() else 0.0,
+        "vwap_premium_pct": vwap_premium_pct,
+        "validation": validation,
     }
 
 
@@ -329,6 +350,7 @@ class PaperTrader:
         self,
         results: List[ScreenedStock],
         good_setups: List[ScreenedStock],
+        risky_watch: List[ScreenedStock],
         vetoed_watch: List[ScreenedStock],
         not_qualified: List[ScreenedStock],
         total_analyzed: int,
@@ -352,27 +374,28 @@ class PaperTrader:
         # Summary Stats
         print(f"\n📊 SUMMARY STATISTICS:")
         print(f"   Universe Screened:     {total_analyzed} stocks")
-        print(f"   Momentum Qualified:    {len(results)} stocks (Score ≥ 75)")
+        print(f"   Momentum Qualified:    {len(results)} stocks (Score ≥ 70)")
         print(f"   ✅ Good Setups:         {len(good_setups)} (real-trade eligible)")
-        print(f"   ❌ Vetoed Risky:        {len(vetoed_watch)} (no auto-entry)")
+        print(f"   ⚠️ Risky Watch:         {len(risky_watch)} (1 veto reason)")
+        print(f"   🚫 Veto:                {len(vetoed_watch)} (2+ veto reasons)")
         print(f"   ⚪ Not Qualified:       {len(not_qualified)} (score < 70)")
         
         # Good Setups Criteria
-        print(f"\n🎯 GOOD SETUP CRITERIA (All 4 must pass):")
+        print(f"\n🎯 GOOD SETUP CRITERIA:")
         print(f"   A stock is classified as 'GOOD' when ALL conditions are met:")
         print(f"   • Momentum Score ≥ 70")
-        print(f"   • RSI between 40-70")
-        print(f"   • EPS > 0")
-        print(f"   • ROE ≥ 0")
+        print(f"   • 1M net holdings > 0 and 1W net holdings > 0")
+        print(f"   • RSI ≤ 70")
+        print(f"   • EPS > 0 and ROE > 0")
         print(f"   • Price ≤ 10% above 14D VWAP")
         
-        # Risky Watch Criteria
-        print(f"\n❌ VETOED CRITERIA:")
-        print(f"   A stock is 'VETOED' when score ≥ 70 BUT 1+ hard signals fail:")
-        print(f"   • RSI outside 40-70")
-        print(f"   • EPS ≤ 0")
-        print(f"   • ROE < 0")
-        print(f"   • Price > 10% above 14D VWAP")
+        print(f"\n⚠️ RISKY CRITERIA:")
+        print(f"   Exactly 1 hard-veto reason while score ≥ 70")
+        print(f"   • Suggested size: 1-2% or paper trade")
+        
+        print(f"\n🚫 VETO CRITERIA:")
+        print(f"   2+ hard-veto reasons while score ≥ 70")
+        print(f"   • Paper-trade only")
         
         # Paper Only Criteria
         print(f"\n⚪ NOT QUALIFIED CRITERIA:")
@@ -381,7 +404,7 @@ class PaperTrader:
         # Good Setups Detail
         if good_setups:
             print(f"\n" + "-" * 70)
-            print(f"✅ GOOD SETUPS - Recommended for Real Trades")
+            print(f"✅ GOOD SETUPS - Recommended for Real Trades (3-5% portfolio)")
             print("-" * 70)
             for i, stock in enumerate(good_setups, 1):
                 risk_class = getattr(stock, '_risk_class', {})
@@ -391,16 +414,27 @@ class PaperTrader:
                 if risk_class.get('is_ideal_setup'):
                     print(f"       ⭐ IDEAL SETUP - All 4 conditions met perfectly")
         
+        # Risky Detail
+        if risky_watch:
+            print(f"\n" + "-" * 70)
+            print(f"⚠️ RISKY WATCH - Limited Position Sizing")
+            print("-" * 70)
+            for i, stock in enumerate(risky_watch, 1):
+                risk_class = getattr(stock, '_risk_class', {})
+                print(f"\n   #{i} {stock.symbol} ({stock.total_score:.0f}/100)")
+                print(f"       Reason: {', '.join(risk_class.get('risk_reasons', []))}")
+                print(f"       Guidance: {risk_class.get('position_guidance', '1-2% or paper')}")
+
         # Vetoed Detail
         if vetoed_watch:
             print(f"\n" + "-" * 70)
-            print(f"❌ VETOED RISKY - No Real-Money Auto Entry")
+            print(f"🚫 VETO - No Real-Money Auto Entry")
             print("-" * 70)
             for i, stock in enumerate(vetoed_watch, 1):
                 risk_class = getattr(stock, '_risk_class', {})
                 print(f"\n   #{i} {stock.symbol} ({stock.total_score:.0f}/100)")
                 print(f"       Failed Signals: {', '.join(risk_class.get('risk_reasons', []))}")
-                print(f"       Guidance: {risk_class.get('position_guidance', 'Paper-trade / 1% size only')}")
+                print(f"       Guidance: {risk_class.get('position_guidance', 'Paper-trade only')}")
         
         # Not Qualified Detail
         if not_qualified:
@@ -576,8 +610,9 @@ class PaperTrader:
         # ========== RISK CLASSIFICATION ==========
         # Classify each stock into GOOD vs RISKY tiers
         # Philosophy: NEVER hide momentum-qualified stocks, but restrict auto-entry for risky setups
-        good_setups = []     # Momentum>=70 and all 4 veto signals pass
-        vetoed_watch = []    # Momentum>=70 but one or more veto signals failed
+        good_setups = []     # Momentum>=70 and all hard-veto signals pass
+        risky_watch = []     # Momentum>=70 with one veto reason
+        vetoed_watch = []    # Momentum>=70 with multiple veto reasons
         not_qualified = []   # Momentum<70 (kept visible in detailed section)
         
         for stock in results:
@@ -586,7 +621,9 @@ class PaperTrader:
             
             if risk_class["risk_tier"] == "GOOD":
                 good_setups.append(stock)
-            elif risk_class["risk_tier"] == "VETOED":
+            elif risk_class["risk_tier"] == "RISKY":
+                risky_watch.append(stock)
+            elif risk_class["risk_tier"] == "VETO":
                 vetoed_watch.append(stock)
             else:
                 not_qualified.append(stock)
@@ -597,13 +634,13 @@ class PaperTrader:
         print("=" * 70)
         print(f"Market Regime: {'🐻 BEAR' if is_bear else '🐂 BULL'}")
         print(f"Stocks Analyzed: {50 if quick_mode else 299} | Momentum Qualified: {len(results)}")
-        print(f"   ✅ Good Setups: {len(good_setups)} | ❌ Vetoed Risky: {len(vetoed_watch)} | ⚪ Not Qualified: {len(not_qualified)}")
+        print(f"✅ GOOD: {len(good_setups)} | ⚠️ RISKY: {len(risky_watch)} | 🚫 VETO: {len(vetoed_watch)}")
         
         # ========== SECTION 1: GOOD SETUPS (Real-money tradeable) ==========
         if good_setups:
             print("\n" + "=" * 70)
-            print("✅ GOOD SETUPS (Suitable for small-position real trades)")
-            print("   These stocks passed all hard-veto checks: RSI, EPS, ROE, VWAP premium")
+            print("✅ GOOD SETUPS (3-5% portfolio)")
+            print("   These stocks passed dual timeframe and hard-veto checks")
             print("=" * 70)
             
             for rank, stock in enumerate(good_setups, 1):
@@ -621,17 +658,27 @@ class PaperTrader:
                 if risk_class.get('is_ideal_setup'):
                     print(f"       ⭐ IDEAL SETUP - All conditions met!")
         
-        # ========== SECTION 2: VETOED RISKY (No auto-entry) ==========
+        # ========== SECTION 2: RISKY WATCH (Limited size) ==========
+        if risky_watch:
+            print("\n" + "=" * 70)
+            print("⚠️ RISKY WATCH (1-2% portfolio)")
+            print("=" * 70)
+            for rank, stock in enumerate(risky_watch, 1):
+                risk_class = stock._risk_class
+                print(f"\n   #{rank} {stock.symbol:<10} ⚠️ RISKY | Score: {stock.total_score:.0f}/100")
+                print(f"       Reason: {', '.join(risk_class['risk_reasons'])}")
+                print(f"       Guidance: {risk_class['position_guidance']}")
+
+        # ========== SECTION 3: VETO (No real-money entry) ==========
         if vetoed_watch:
             print("\n" + "=" * 70)
-            print("❌ VETOED – RISKY (Momentum score is high but hard-veto failed)")
-            print("   No real-money auto-entry. Paper-trade / 1% size only.")
+            print("🚫 VETO SETUPS (Paper-trade only)")
             print("=" * 70)
             
             for rank, stock in enumerate(vetoed_watch, 1):
                 risk_class = stock._risk_class
                 raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
-                print(f"\n   #{rank} {stock.symbol:<10} ❌ VETOED | Score: {stock.total_score:.0f}/100 {raw_info}")
+                print(f"\n   #{rank} {stock.symbol:<10} 🚫 VETO | Score: {stock.total_score:.0f}/100 {raw_info}")
                 
                 print(f"       🚩 FAILED SIGNALS:")
                 for reason in risk_class['risk_reasons']:
@@ -641,7 +688,7 @@ class PaperTrader:
                 
                 print(f"       📊 RSI: {stock.rsi:.1f} | EPS: Rs.{risk_class['eps']:.2f} | ROE: {risk_class['roe']:.1f}% | VWAP Premium: +{risk_class.get('vwap_premium_pct', 0):.1f}%")
         
-        # ========== SECTION 3: NOT QUALIFIED ==========
+        # ========== SECTION 4: NOT QUALIFIED ==========
         if not_qualified:
             print("\n" + "=" * 70)
             print("⚪ NOT QUALIFIED (Momentum < 70)")
@@ -660,7 +707,7 @@ class PaperTrader:
         
         for rank, stock in enumerate(results, 1):
             risk_class = stock._risk_class
-            tier_emoji = {"GOOD": "✅", "VETOED": "❌", "NOT_QUALIFIED": "⚪"}.get(risk_class["risk_tier"], "❓")
+            tier_emoji = {"GOOD": "✅", "RISKY": "⚠️", "VETO": "🚫", "NOT_QUALIFIED": "⚪"}.get(risk_class["risk_tier"], "❓")
             raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
             print(f"\n   #{rank} {stock.symbol:<10} {tier_emoji} {risk_class['risk_tier']} | Score: {stock.total_score:.0f}/100 {raw_info}")
             
@@ -690,7 +737,7 @@ class PaperTrader:
         
         # Add Stakeholder Report with classification summary
         self._print_stakeholder_report_with_classification(
-            results, good_setups, vetoed_watch, not_qualified,
+            results, good_setups, risky_watch, vetoed_watch, not_qualified,
             total_analyzed=50 if quick_mode else 299, strategy=strategy
         )
         
@@ -2186,7 +2233,13 @@ class PaperTrader:
         print("\n" + "-" * 70)
         print("💼 POSITION SIZING GUIDE (Based on Overall Score)")
         print("-" * 70)
-        if best_score < 50:
+        risk_class_best = classify_stock_risk(best_result, screener=screener) if best_result else {"risk_tier": "NOT_QUALIFIED"}
+        if risk_class_best["risk_tier"] == "VETO":
+            print("   🚫 VETO: Paper-trade only due to multiple hard risk failures.")
+            print("      Position size: 0% real portfolio")
+        elif risk_class_best["risk_tier"] == "RISKY":
+            print("   ⚠️ RISKY: 1-2% portfolio maximum or paper-trade.")
+        elif best_score < 50:
             print("   🔴 Score < 50: AVOID / Paper trade only.")
             print("      Do not risk real capital on this setup.")
         elif best_score < 70:
@@ -2194,7 +2247,7 @@ class PaperTrader:
             print("      Maximum 5% of portfolio. Exit quickly if stop is hit.")
         else:
             print("   🟢 Score ≥ 70: Normal position size allowed if risk rules are met.")
-            print("      Up to 10% of portfolio. Follow the suggested target/stop.")
+            print("      3-5% of portfolio. Follow the suggested target/stop.")
         
         # ========== EDUCATIONAL TIP SECTION ==========
         print("\n" + "-" * 70)
@@ -2692,6 +2745,20 @@ def main():
   pending      - List all pending recommendations
   analyze      - Deep analysis of a specific stock (use with --stock=SYMBOL)"""
     )
+    # Compatibility aliases for requested two-command workflow:
+    # python paper_trader.py --scan --strategy=momentum
+    # python paper_trader.py --analyze SYMBOL
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Alias for --action=scan"
+    )
+    parser.add_argument(
+        "--analyze",
+        type=str,
+        default=None,
+        help="Alias for --action=analyze --stock=SYMBOL"
+    )
     parser.add_argument(
         "--symbol",
         type=str,
@@ -2762,6 +2829,11 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.scan:
+        args.action = "scan"
+    if args.analyze:
+        args.action = "analyze"
+        args.stock = args.analyze
     
     trader = PaperTrader()
     
@@ -2792,6 +2864,7 @@ def main():
             print("\n" + "=" * 70)
             print("💡 NEXT STEP: Confirm your purchases!")
             print("   python tools/paper_trader.py --action=buy --symbol=XXX --price=YYY")
+            print("   Alias flow: python tools/paper_trader.py --scan --strategy=momentum")
             print("=" * 70)
         
         elif args.action == "buy":

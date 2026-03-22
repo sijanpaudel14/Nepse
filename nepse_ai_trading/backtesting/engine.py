@@ -33,6 +33,16 @@ from analysis.indicators import TechnicalIndicators
 
 
 @dataclass
+class BacktestConfig:
+    """Configuration container for backtest execution hooks."""
+    slippage_pct: float = settings.slippage_pct
+    commission_pct: float = settings.broker_commission_pct + settings.sebon_fee_pct
+    dp_charge: float = settings.dp_charge
+    initial_capital: float = 100000
+    risk_per_trade: float = settings.risk_per_trade
+
+
+@dataclass
 class Trade:
     """Represents a single backtest trade."""
     symbol: str
