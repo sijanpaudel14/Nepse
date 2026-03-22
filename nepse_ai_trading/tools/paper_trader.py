@@ -42,6 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from analysis.master_screener import MasterStockScreener, get_best_stocks, ScreenedStock
 from data.fetcher import NepseFetcher
+from data.sharehub_api import get_price_history_with_open
 
 
 # Database configuration
@@ -1491,25 +1492,18 @@ class PaperTrader:
         print("📰 RECENT NEWS & ANNOUNCEMENTS")
         print("-" * 70)
         
-        # Try to fetch news (with timeout)
+        # Try to fetch news
         recent_news = []
         try:
-            from intelligence.news_scraper import scrape_news_for_stock
-            import signal
-            
-            def timeout_handler(signum, frame):
-                raise TimeoutError("News scraping timeout")
-            
-            # Set 15-second timeout
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(15)
-            
-            try:
+            from intelligence.news_scraper import (
+                PLAYWRIGHT_AVAILABLE,
+                is_playwright_browser_installed,
+                scrape_news_for_stock,
+            )
+            if PLAYWRIGHT_AVAILABLE and is_playwright_browser_installed():
                 recent_news = scrape_news_for_stock(symbol, limit=3, headless=True)
-                signal.alarm(0)  # Cancel alarm
-            except TimeoutError:
-                logger.debug(f"News scraping timed out for {symbol}")
-                signal.alarm(0)
+            else:
+                logger.debug("Skipping news scraping: Playwright browser not installed")
         except Exception as e:
             logger.debug(f"Could not fetch news for {symbol}: {e}")
         
@@ -1697,39 +1691,65 @@ class PaperTrader:
             # Try to get sector alternatives from screener
             try:
                 # Run a quick screening for the same sector
-                # Import the actual screener classes
-                from analysis.master_screener import ValueScreener, MomentumScreener
-                
-                # Use momentum strategy for alternatives (faster)
-                alt_screener = MomentumScreener(fetcher=screener.fetcher)
+                # Use momentum strategy for alternatives
+                alt_screener = MasterStockScreener(strategy="momentum")
+                alt_screener._preload_market_data()
                 
                 # Quick scan (don't load all market data again)
                 print(f"   🔍 Scanning {sector} sector for better opportunities...")
                 
-                # Get all stocks from this sector
-                sector_stocks = [
-                    comp for comp in screener._company_list 
-                    if comp.get('sectorName') == sector
-                ]
-                
-                if len(sector_stocks) > 5:
-                    # Limit to top 20 by market cap for speed
+                # Get active stocks with valid LTP first (prevents Invalid LTP warnings)
+                active_stocks = alt_screener._get_active_stocks(
+                    allow_historical_fallback=True,
+                    bypass_turnover_filter=False,
+                )
+                sector_stocks = []
+                for stock_item in active_stocks:
+                    sym = stock_item.get("symbol", "")
+                    if not sym:
+                        continue
+                    stock_sector = alt_screener._symbol_sector_map.get(sym, "")
+                    if stock_sector == sector:
+                        sector_stocks.append(stock_item)
+
+                if len(sector_stocks) > 20:
+                    # Limit to top 20 by turnover/liquidity for speed and reliability
                     sector_stocks = sorted(
-                        sector_stocks, 
-                        key=lambda x: x.get('marketCapitalization', 0),
-                        reverse=True
+                        sector_stocks,
+                        key=lambda x: float(x.get("_calculated_turnover", 0) or 0),
+                        reverse=True,
                     )[:20]
                 
                 # Score each (quick mode - skip if too many)
                 alternatives = []
-                for stock_info in sector_stocks[:15]:  # Max 15 for speed
+                for stock_info in sector_stocks[:10]:  # Max 10 for speed
                     sym = stock_info.get('symbol', '')
                     if sym == symbol:  # Skip current stock
                         continue
                     
                     try:
-                        # Quick score (no full analysis)
-                        result = alt_screener._score_stock({'symbol': sym})
+                        # Fallback: when NEPSE live payload has missing LTP, use ShareHub price-history close
+                        ltp = float(
+                            stock_info.get("lastTradedPrice", 0)
+                            or stock_info.get("close", 0)
+                            or stock_info.get("ltp", 0)
+                            or 0
+                        )
+                        if ltp <= 0:
+                            price_rows = get_price_history_with_open(sym, days=1) or []
+                            if price_rows:
+                                sh_close = float(price_rows[0].get("close", 0) or 0)
+                                if sh_close > 0:
+                                    stock_info["lastTradedPrice"] = sh_close
+                                    ltp = sh_close
+
+                        # Still invalid after ShareHub fallback -> skip to avoid noisy warnings
+                        if ltp <= 0:
+                            logger.debug(f"Skipping alternative {sym}: no valid LTP from NEPSE/ShareHub")
+                            continue
+
+                        # Quick score using active stock payload (includes valid LTP/volume)
+                        result = alt_screener._score_stock(stock_info)
                         if result and result.total_score > best_score + 10:  # At least 10 points better
                             alternatives.append({
                                 'symbol': sym,
@@ -1738,6 +1758,8 @@ class PaperTrader:
                                 'dump_risk': result.distribution_risk,
                                 'ltp': result.ltp,
                             })
+                            if len(alternatives) >= 5:
+                                break
                     except:
                         continue
                 

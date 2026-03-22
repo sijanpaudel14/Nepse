@@ -9,6 +9,7 @@ IMPORTANT: These sites may change their structure. Update selectors as needed.
 
 import asyncio
 import re
+import os
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
@@ -588,6 +589,40 @@ def scrape_news_for_stock(symbol: str, limit: int = 3, headless: bool = True) ->
     if not PLAYWRIGHT_AVAILABLE:
         logger.warning("Playwright not available, returning empty news")
         return []
-    
-    scraper = NewsScraper(headless=headless)
-    return asyncio.run(scraper.scrape_all_sources(symbol, limit))
+
+    async def _run_scrape() -> List[NewsItem]:
+        scraper = NewsScraper(headless=headless)
+        try:
+            return await scraper.scrape_all_sources(symbol, limit)
+        finally:
+            await scraper.close()
+
+    return asyncio.run(_run_scrape())
+
+
+def is_playwright_browser_installed() -> bool:
+    """
+    Check whether a runnable Playwright browser binary exists.
+    """
+    chromium_path = os.path.expanduser("~/.cache/ms-playwright")
+    if not os.path.isdir(chromium_path):
+        return False
+
+    # Validate actual browser executable, not just chromium-* folder presence.
+    candidates = [
+        "chrome-linux/chrome",              # Linux
+        "chrome-linux/headless_shell",      # Linux headless variant
+        "chrome-mac/Chromium.app/Contents/MacOS/Chromium",  # macOS
+        "chrome-win/chrome.exe",            # Windows
+    ]
+
+    for name in os.listdir(chromium_path):
+        if not name.startswith("chromium-"):
+            continue
+        base = os.path.join(chromium_path, name)
+        for rel in candidates:
+            exe = os.path.join(base, rel)
+            if os.path.isfile(exe) and os.access(exe, os.X_OK):
+                return True
+
+    return False
