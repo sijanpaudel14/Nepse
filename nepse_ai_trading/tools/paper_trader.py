@@ -1706,50 +1706,37 @@ class PaperTrader:
                 # Quick scan (don't load all market data again)
                 print(f"   🔍 Scanning {sector} sector for better opportunities...")
                 
-                # Get active stocks with valid LTP first (prevents Invalid LTP warnings)
-                active_stocks = alt_screener._get_active_stocks(
-                    allow_historical_fallback=True,
-                    bypass_turnover_filter=False,
-                )
-                sector_stocks = []
-                for stock_item in active_stocks:
-                    sym = stock_item.get("symbol", "")
-                    if not sym:
-                        continue
-                    stock_sector = alt_screener._symbol_sector_map.get(sym, "")
-                    if stock_sector == sector:
-                        sector_stocks.append(stock_item)
+                # Build a compact same-sector candidate list (avoid full 300-stock historical fallback scan)
+                company_list = alt_screener.fetcher.fetch_company_list()
+                sector_symbols = []
+                for comp in company_list:
+                    if isinstance(comp, dict):
+                        comp_symbol = str(comp.get("symbol", "")).upper()
+                        comp_sector = comp.get("sectorName", comp.get("sector", ""))
+                    else:
+                        comp_symbol = str(getattr(comp, "symbol", "")).upper()
+                        comp_sector = getattr(comp, "sectorName", getattr(comp, "sector", ""))
+                    if comp_symbol and comp_sector == sector and comp_symbol != symbol:
+                        sector_symbols.append(comp_symbol)
 
-                if len(sector_stocks) > 20:
-                    # Limit to top 20 by turnover/liquidity for speed and reliability
-                    sector_stocks = sorted(
-                        sector_stocks,
-                        key=lambda x: float(x.get("_calculated_turnover", 0) or 0),
-                        reverse=True,
-                    )[:20]
+                # Limit scope for speed; we'll enrich LTP from ShareHub for this short list only
+                sector_symbols = sector_symbols[:25]
                 
                 # Score each (quick mode - skip if too many)
                 alternatives = []
-                for stock_info in sector_stocks[:10]:  # Max 10 for speed
-                    sym = stock_info.get('symbol', '')
-                    if sym == symbol:  # Skip current stock
-                        continue
+                for sym in sector_symbols:
                     
                     try:
-                        # Fallback: when NEPSE live payload has missing LTP, use ShareHub price-history close
-                        ltp = float(
-                            stock_info.get("lastTradedPrice", 0)
-                            or stock_info.get("close", 0)
-                            or stock_info.get("ltp", 0)
-                            or 0
-                        )
-                        if ltp <= 0:
-                            price_rows = get_price_history_with_open(sym, days=1) or []
-                            if price_rows:
-                                sh_close = float(price_rows[0].get("close", 0) or 0)
-                                if sh_close > 0:
-                                    stock_info["lastTradedPrice"] = sh_close
-                                    ltp = sh_close
+                        stock_info = {"symbol": sym}
+                        # Get latest close/open from ShareHub to ensure valid price seed
+                        price_rows = get_price_history_with_open(sym, days=1) or []
+                        ltp = 0.0
+                        if price_rows:
+                            row = price_rows[0]
+                            ltp = float(row.get("close", 0) or row.get("open", 0) or 0)
+                            if ltp > 0:
+                                stock_info["lastTradedPrice"] = ltp
+                                stock_info["close"] = ltp
 
                         # Still invalid after ShareHub fallback -> skip to avoid noisy warnings
                         if ltp <= 0:

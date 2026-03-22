@@ -776,7 +776,7 @@ async def analyze_single_stock(
         
         # If no live data, try historical
         if not _is_valid_price(ltp):
-            history = fetcher.fetch_price_history(symbol, days=5)
+            history = fetcher.fetch_price_history(symbol, days=7)
             if history is not None and not history.empty:
                 ltp = _to_float(history['close'].iloc[-1], 0.0)
         

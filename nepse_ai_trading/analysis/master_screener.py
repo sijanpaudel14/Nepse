@@ -652,7 +652,7 @@ class MasterStockScreener:
         self._preload_market_data()
         
         # Step 2: Get all active stocks
-        stocks = self._get_active_stocks()
+        stocks = self._get_active_stocks(quick_mode=quick_mode)
         
         # Quick mode: Only analyze top 50 by volume (much faster)
         if quick_mode:
@@ -1432,7 +1432,7 @@ class MasterStockScreener:
             
             try:
                 from data.sharehub_api import get_price_history_with_open
-                sharehub_data = get_price_history_with_open(symbol, days=5)
+                sharehub_data = get_price_history_with_open(symbol, days=7)
                 
                 if sharehub_data and len(sharehub_data) > 0:
                     # ShareHub returns latest data first
@@ -1639,7 +1639,11 @@ class MasterStockScreener:
             return 10.0
         return 0.0
 
-    def _build_market_data_from_history(self, for_stealth_scan: bool = False) -> List[Dict]:
+    def _build_market_data_from_history(
+        self,
+        for_stealth_scan: bool = False,
+        max_symbols: Optional[int] = None,
+    ) -> List[Dict]:
         """
         🔄 UNIVERSAL FALLBACK MECHANISM: Build market data from historical price data.
         
@@ -1675,6 +1679,23 @@ class MasterStockScreener:
                 remaining = list(all_symbols - priority_symbols)[:500 - len(priority_symbols)]
                 symbols_to_check = priority_symbols | set(remaining)
         
+        # If sector filter is set, constrain fallback early to that sector only
+        if self.target_sector and str(self.target_sector).lower() != "all":
+            target_normalized = str(self.target_sector).lower().replace("-", " ").strip()
+            filtered_symbols = set()
+            for sym in symbols_to_check:
+                raw_sector = str(self._symbol_sector_map.get(sym, ""))
+                stock_sector_normalized = raw_sector.lower().replace("-", " ").strip()
+                if stock_sector_normalized == target_normalized or (
+                    "hydro" in target_normalized and "hydro" in stock_sector_normalized
+                ):
+                    filtered_symbols.add(sym)
+            symbols_to_check = filtered_symbols
+
+        # Optional hard limit for quick mode / compact scans
+        if max_symbols and len(symbols_to_check) > max_symbols:
+            symbols_to_check = set(list(symbols_to_check)[:max_symbols])
+
         logger.info(f"   📊 Fetching historical data for {len(symbols_to_check)} stocks...")
         
         market_data = []
@@ -1683,7 +1704,7 @@ class MasterStockScreener:
         for symbol in symbols_to_check:
             try:
                 # Fetch recent price history (just need last trading day)
-                df = self.fetcher.fetch_price_history(symbol, days=5)
+                df = self.fetcher.fetch_price_history(symbol, days=7)
                 
                 if df is None or df.empty:
                     continue
@@ -1733,6 +1754,7 @@ class MasterStockScreener:
         allow_historical_fallback: bool = True,
         bypass_turnover_filter: bool = False,
         for_stealth_scan: bool = False,
+        quick_mode: bool = False,
     ) -> List[Dict]:
         """
         Get all actively traded stocks from NEPSE.
@@ -1765,7 +1787,14 @@ class MasterStockScreener:
             # ========== FALLBACK: Use historical data when market is closed ==========
             if not stocks and allow_historical_fallback:
                 logger.info("   ⏰ Market closed - using historical price data fallback...")
-                stocks = self._build_market_data_from_history(for_stealth_scan=for_stealth_scan)
+                history_cap = None
+                if quick_mode and not for_stealth_scan:
+                    # Keep quick scans quick when market is closed
+                    history_cap = 80
+                stocks = self._build_market_data_from_history(
+                    for_stealth_scan=for_stealth_scan,
+                    max_symbols=history_cap,
+                )
                 use_historical = True
                 
                 if stocks:

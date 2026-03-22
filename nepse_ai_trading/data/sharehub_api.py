@@ -1935,7 +1935,7 @@ def get_price_history_with_open(symbol: str, days: int = 10) -> Optional[List[Di
         Returns None if API fails
     
     Example:
-        data = get_price_history_with_open("BARUN", days=5)
+        data = get_price_history_with_open("BARUN", days=7)
         if data:
             today = data[0]  # Latest data first
             open_price = today["open"]
