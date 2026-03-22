@@ -68,6 +68,113 @@ class PaperTrade:
     hold_days: int = 0
 
 
+def classify_stock_risk(stock) -> dict:
+    """
+    🎯 RISK CLASSIFICATION ENGINE
+    
+    Classifies stocks into GOOD vs RISKY based on:
+    - EPS (negative = risky)
+    - ROE (negative = risky)  
+    - RSI (overbought >70 = risky)
+    - Distribution risk (HIGH/CRITICAL = risky)
+    
+    Philosophy:
+    - NEVER hide any momentum-qualified stock from scan
+    - BUT restrict auto-entry recommendations for risky setups
+    - User always sees the opportunity, makes informed choice
+    
+    Returns:
+        dict with:
+        - risk_tier: "GOOD" | "RISKY" | "PAPER_ONLY"
+        - risk_reasons: list of specific concerns
+        - position_guidance: recommended position sizing
+        - entry_allowed: whether to show auto-entry suggestion
+    """
+    risk_reasons = []
+    risk_tier = "GOOD"
+    
+    # Extract metrics
+    eps = getattr(stock, 'eps', 0)
+    roe = getattr(stock, 'roe', 0)
+    pe = getattr(stock, 'pe_ratio', 0)
+    rsi = getattr(stock, 'rsi', 50)
+    score = getattr(stock, 'total_score', 0)
+    dist_risk = getattr(stock, 'distribution_risk', 'LOW')
+    
+    # ===== FUNDAMENTAL RED FLAGS =====
+    if eps <= 0:
+        risk_reasons.append(f"❌ Negative EPS (Rs. {eps:.2f})")
+        risk_tier = "RISKY"
+    
+    if roe < 0:
+        risk_reasons.append(f"❌ Negative ROE ({roe:.1f}%)")
+        risk_tier = "RISKY"
+    elif roe < 5 and roe >= 0:
+        risk_reasons.append(f"⚠️ Very low ROE ({roe:.1f}%)")
+    
+    if pe < 0:
+        risk_reasons.append(f"❌ Negative PE ({pe:.1f})")
+        risk_tier = "RISKY"
+    elif pe > 50:
+        risk_reasons.append(f"⚠️ Very high PE ({pe:.1f})")
+    
+    # ===== TECHNICAL RED FLAGS =====
+    if rsi > 75:
+        risk_reasons.append(f"🔴 Extremely overbought (RSI {rsi:.1f})")
+        risk_tier = "PAPER_ONLY"  # Most dangerous
+    elif rsi > 70:
+        risk_reasons.append(f"⚠️ Overbought (RSI {rsi:.1f})")
+        if risk_tier == "GOOD":
+            risk_tier = "RISKY"
+    elif rsi < 30:
+        risk_reasons.append(f"⚠️ Oversold (RSI {rsi:.1f})")
+    
+    # ===== DISTRIBUTION RED FLAGS =====
+    if dist_risk == "CRITICAL":
+        risk_reasons.append("🚨 CRITICAL distribution risk - operators dumping")
+        risk_tier = "PAPER_ONLY"
+    elif dist_risk == "HIGH":
+        risk_reasons.append("⚠️ HIGH distribution risk")
+        if risk_tier == "GOOD":
+            risk_tier = "RISKY"
+    
+    # ===== DETERMINE ENTRY GUIDANCE =====
+    if risk_tier == "PAPER_ONLY":
+        entry_allowed = False
+        position_guidance = "PAPER TRADE ONLY - Do NOT use real money"
+    elif risk_tier == "RISKY":
+        entry_allowed = True  # Show entry but with warnings
+        position_guidance = "TINY SIZE ONLY (2-3% of portfolio max)"
+    else:
+        # GOOD tier
+        if score >= 80:
+            position_guidance = "Normal position (5-7% of portfolio)"
+        else:
+            position_guidance = "Small position (3-5% of portfolio)"
+        entry_allowed = True
+    
+    # ===== IDEAL SETUP CHECK =====
+    # Perfect momentum setup: Score ≥70, EPS>0 OR ROE≥0, RSI 40-70
+    is_ideal = (
+        score >= 70 and
+        (eps > 0 or roe >= 0) and
+        40 <= rsi <= 70 and
+        dist_risk in ["LOW", "MEDIUM"]
+    )
+    
+    return {
+        "risk_tier": risk_tier,
+        "risk_reasons": risk_reasons,
+        "position_guidance": position_guidance,
+        "entry_allowed": entry_allowed,
+        "is_ideal_setup": is_ideal,
+        "eps": eps,
+        "roe": roe,
+        "rsi": rsi,
+        "pe": pe,
+    }
+
+
 class PaperTrader:
     """
     📈 Paper Trading Engine for Forward-Testing the Algorithm
@@ -239,6 +346,105 @@ class PaperTrader:
             
             print(f"       • TARGET: Rs. {stock.target_price:.0f} (+10%) | STOP: Rs. {stock.stop_loss:.0f} (-5%)")
             print("")
+
+    def _print_stakeholder_report_with_classification(
+        self, 
+        results: List[ScreenedStock], 
+        good_setups: List[ScreenedStock],
+        risky_watch: List[ScreenedStock],
+        paper_only: List[ScreenedStock],
+        total_analyzed: int, 
+        strategy: str = "value"
+    ):
+        """
+        Print a narrative report with risk classification for stakeholders.
+        
+        This enhanced report clearly separates GOOD setups from RISKY ones,
+        explaining WHY each classification was made.
+        """
+        
+        tech_weight = 40 if strategy == "momentum" else 30
+        fund_weight = 10 if strategy == "momentum" else 20
+            
+        print("\n" + "=" * 70)
+        print(f"🏛️ STAKEHOLDER REPORT: RISK-CLASSIFIED ANALYSIS")
+        print(f"   Strategy: {strategy.upper()} | Date: {datetime.now().strftime('%Y-%m-%d')}")
+        print("=" * 70)
+        
+        # Summary Stats
+        print(f"\n📊 SUMMARY STATISTICS:")
+        print(f"   Universe Screened:     {total_analyzed} stocks")
+        print(f"   Momentum Qualified:    {len(results)} stocks (Score ≥ 75)")
+        print(f"   ✅ Good Setups:         {len(good_setups)} (safe for real trades)")
+        print(f"   ⚠️ Risky Watch:         {len(risky_watch)} (tiny size only)")
+        print(f"   🚫 Paper Only:          {len(paper_only)} (do NOT trade)")
+        
+        # Good Setups Criteria
+        print(f"\n🎯 GOOD SETUP CRITERIA:")
+        print(f"   A stock is classified as 'GOOD' when ALL conditions are met:")
+        print(f"   • Momentum Score ≥ 70")
+        print(f"   • EPS > 0 OR ROE ≥ 0 (company not losing money)")
+        print(f"   • RSI between 40-70 (not overbought)")
+        print(f"   • Distribution Risk: LOW or MEDIUM (operators not dumping)")
+        
+        # Risky Watch Criteria
+        print(f"\n⚠️ RISKY WATCH CRITERIA:")
+        print(f"   A stock is 'RISKY' when score ≥ 70 BUT has red flags:")
+        print(f"   • Negative EPS (company losing money)")
+        print(f"   • Negative ROE (poor capital efficiency)")
+        print(f"   • RSI > 70 (overbought - may correct)")
+        print(f"   • Distribution Risk: HIGH (operators may dump)")
+        
+        # Paper Only Criteria
+        print(f"\n🚫 PAPER ONLY CRITERIA:")
+        print(f"   Extremely dangerous setups - paper trade only:")
+        print(f"   • RSI > 75 (extremely overbought)")
+        print(f"   • Distribution Risk: CRITICAL (active dumping)")
+        
+        # Good Setups Detail
+        if good_setups:
+            print(f"\n" + "-" * 70)
+            print(f"✅ GOOD SETUPS - Recommended for Real Trades")
+            print("-" * 70)
+            for i, stock in enumerate(good_setups, 1):
+                risk_class = getattr(stock, '_risk_class', {})
+                print(f"\n   #{i} {stock.symbol} ({stock.total_score:.0f}/100)")
+                print(f"       Entry: Rs.{stock.entry_price_with_slippage:.2f} → Target: Rs.{stock.target_price:.2f} (+10%)")
+                print(f"       Position Size: {risk_class.get('position_guidance', 'Normal')}")
+                if risk_class.get('is_ideal_setup'):
+                    print(f"       ⭐ IDEAL SETUP - All 4 conditions met perfectly")
+        
+        # Risky Watch Detail
+        if risky_watch:
+            print(f"\n" + "-" * 70)
+            print(f"⚠️ RISKY WATCH - Trade Only with Strict Risk Management")
+            print("-" * 70)
+            for i, stock in enumerate(risky_watch, 1):
+                risk_class = getattr(stock, '_risk_class', {})
+                print(f"\n   #{i} {stock.symbol} ({stock.total_score:.0f}/100)")
+                print(f"       Why Risky: {', '.join(risk_class.get('risk_reasons', []))}")
+                print(f"       Guidance: {risk_class.get('position_guidance', 'Tiny size only')}")
+        
+        # Paper Only Detail
+        if paper_only:
+            print(f"\n" + "-" * 70)
+            print(f"🚫 PAPER ONLY - Do NOT Use Real Money")
+            print("-" * 70)
+            for i, stock in enumerate(paper_only, 1):
+                risk_class = getattr(stock, '_risk_class', {})
+                print(f"\n   #{i} {stock.symbol} ({stock.total_score:.0f}/100)")
+                print(f"       Critical Risks: {', '.join(risk_class.get('risk_reasons', []))}")
+                print(f"       Use For: Learning, paper trading, watchlist only")
+        
+        # Philosophy Note
+        print(f"\n" + "=" * 70)
+        print(f"💡 PHILOSOPHY")
+        print("=" * 70)
+        print(f"   • We NEVER hide any momentum-qualified stock from the scan")
+        print(f"   • But we RESTRICT auto-pushing risky names as real-money entries")
+        print(f"   • Use 'analyze_single_stock' for detailed reports on any stock")
+        print(f"   • The detailed report is the final judge for trading decisions")
+        print("")
     
     def run_daily_scan(
         self, 
@@ -392,28 +598,111 @@ class PaperTrader:
         
         logger.info(f"✅ Saved {len(results)} paper trades for {scan_date}")
         
+        # ========== RISK CLASSIFICATION ==========
+        # Classify each stock into GOOD vs RISKY tiers
+        # Philosophy: NEVER hide momentum-qualified stocks, but restrict auto-entry for risky setups
+        good_setups = []  # EPS>0 OR ROE≥0, RSI 40-70, LOW/MEDIUM dump risk
+        risky_watch = []  # EPS≤0 OR ROE<0, RSI>70, or HIGH/CRITICAL dump risk
+        paper_only = []   # Extremely risky (RSI>75, CRITICAL dump risk)
+        
+        for stock in results:
+            risk_class = classify_stock_risk(stock)
+            stock._risk_class = risk_class  # Attach for later use
+            
+            if risk_class["risk_tier"] == "PAPER_ONLY":
+                paper_only.append(stock)
+            elif risk_class["risk_tier"] == "RISKY":
+                risky_watch.append(stock)
+            else:
+                good_setups.append(stock)
+        
         # Print summary
         print("\n" + "=" * 70)
         print(f"📊 DAILY SCAN COMPLETE - {scan_date}")
         print("=" * 70)
         print(f"Market Regime: {'🐻 BEAR' if is_bear else '🐂 BULL'}")
-        print(f"Stocks Saved: {len(results)}")
-        print("\n📋 TODAY'S PAPER TRADES & ANALYSIS:")
-        for rank, stock in enumerate(results, 1):
-            raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
-            print(f"\n   #{rank} {stock.symbol:<10} Score: {stock.total_score:.0f}/100 {raw_info} | Entry: Rs.{stock.entry_price_with_slippage:.2f}")
-            print(f"       🎯 Target: Rs.{stock.target_price:.2f} | 🛑 Stop: Rs.{stock.stop_loss_with_slippage:.2f}")
+        print(f"Stocks Analyzed: {50 if quick_mode else 299} | Momentum Qualified: {len(results)}")
+        print(f"   ✅ Good Setups: {len(good_setups)} | ⚠️ Risky Watch: {len(risky_watch)} | 🚫 Paper Only: {len(paper_only)}")
+        
+        # ========== SECTION 1: GOOD SETUPS (Real-money tradeable) ==========
+        if good_setups:
+            print("\n" + "=" * 70)
+            print("✅ GOOD SETUPS (Suitable for small-position real trades)")
+            print("   These stocks have: Score≥70, EPS>0 OR ROE≥0, RSI 40-70, LOW dump risk")
+            print("=" * 70)
             
-            # HOLDING PERIOD GUIDANCE (NEW!)
-            expected_hold = getattr(stock, 'expected_holding_days', 7)
-            max_hold = getattr(stock, 'max_holding_days', 15)
-            exit_strategy = getattr(stock, 'exit_strategy', '')
-            print(f"       📅 HOLD: {expected_hold}-{max_hold} days | ⏰ Exit if no movement by Day {max_hold}")
+            for rank, stock in enumerate(good_setups, 1):
+                risk_class = stock._risk_class
+                raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
+                print(f"\n   #{rank} {stock.symbol:<10} Score: {stock.total_score:.0f}/100 {raw_info}")
+                print(f"       💰 Entry: Rs.{stock.entry_price_with_slippage:.2f} | 🎯 Target: Rs.{stock.target_price:.2f} | 🛑 Stop: Rs.{stock.stop_loss_with_slippage:.2f}")
+                
+                expected_hold = getattr(stock, 'expected_holding_days', 7)
+                max_hold = getattr(stock, 'max_holding_days', 15)
+                print(f"       📅 HOLD: {expected_hold}-{max_hold} days")
+                print(f"       📊 RSI: {stock.rsi:.1f} | EPS: Rs.{risk_class['eps']:.2f} | ROE: {risk_class['roe']:.1f}%")
+                print(f"       💼 Position Size: {risk_class['position_guidance']}")
+                
+                if risk_class.get('is_ideal_setup'):
+                    print(f"       ⭐ IDEAL SETUP - All conditions met!")
+        
+        # ========== SECTION 2: RISKY WATCH (Trade with caution) ==========
+        if risky_watch:
+            print("\n" + "=" * 70)
+            print("⚠️ RISKY WATCH (Momentum qualified BUT has red flags)")
+            print("   Trade only with TINY size (2-3% max) and strict stop loss")
+            print("=" * 70)
+            
+            for rank, stock in enumerate(risky_watch, 1):
+                risk_class = stock._risk_class
+                raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
+                print(f"\n   #{rank} {stock.symbol:<10} Score: {stock.total_score:.0f}/100 {raw_info}")
+                
+                # Show reasons WHY it's risky
+                print(f"       🚩 RISK FLAGS:")
+                for reason in risk_class['risk_reasons']:
+                    print(f"          {reason}")
+                
+                # Show entry IF allowed, but with clear warning
+                if risk_class['entry_allowed']:
+                    print(f"       💰 Entry: Rs.{stock.entry_price_with_slippage:.2f} | 🎯 Target: Rs.{stock.target_price:.2f} | 🛑 Stop: Rs.{stock.stop_loss_with_slippage:.2f}")
+                    print(f"       ⚠️ CAUTION: {risk_class['position_guidance']}")
+                else:
+                    print(f"       🚫 NO AUTO-ENTRY - Use analyze_single_stock for full report")
+                
+                print(f"       📊 RSI: {stock.rsi:.1f} | EPS: Rs.{risk_class['eps']:.2f} | ROE: {risk_class['roe']:.1f}%")
+        
+        # ========== SECTION 3: PAPER ONLY (Do NOT use real money) ==========
+        if paper_only:
+            print("\n" + "=" * 70)
+            print("🚫 PAPER ONLY (Do NOT use real money on these)")
+            print("   Extremely overbought (RSI>75) or CRITICAL distribution risk")
+            print("=" * 70)
+            
+            for rank, stock in enumerate(paper_only, 1):
+                risk_class = stock._risk_class
+                print(f"\n   #{rank} {stock.symbol:<10} Score: {stock.total_score:.0f}/100")
+                print(f"       🚩 CRITICAL RISKS:")
+                for reason in risk_class['risk_reasons']:
+                    print(f"          {reason}")
+                print(f"       📊 RSI: {stock.rsi:.1f} | EPS: Rs.{risk_class['eps']:.2f} | ROE: {risk_class['roe']:.1f}%")
+                print(f"       📝 Use for: Paper trading practice, learning, watchlist only")
+        
+        # ========== DETAILED ANALYSIS (for all stocks) ==========
+        print("\n" + "=" * 70)
+        print("📋 DETAILED ANALYSIS (All momentum-qualified stocks)")
+        print("=" * 70)
+        
+        for rank, stock in enumerate(results, 1):
+            risk_class = stock._risk_class
+            tier_emoji = {"GOOD": "✅", "RISKY": "⚠️", "PAPER_ONLY": "🚫"}.get(risk_class["risk_tier"], "❓")
+            raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
+            print(f"\n   #{rank} {stock.symbol:<10} {tier_emoji} {risk_class['risk_tier']} | Score: {stock.total_score:.0f}/100 {raw_info}")
             
             # DISTRIBUTION RISK ALERT (VWAP-Based)
             dist_risk = getattr(stock, 'distribution_risk', '')
             broker_profit = getattr(stock, 'broker_profit_pct', 0)
-            vwap_cost = getattr(stock, 'broker_avg_cost', 0)  # This is now VWAP
+            vwap_cost = getattr(stock, 'broker_avg_cost', 0)
             dist_warning = getattr(stock, 'distribution_warning', '')
             
             if dist_risk and dist_risk != "N/A":
@@ -424,38 +713,21 @@ class PaperTrader:
                 if dist_risk in ["HIGH", "CRITICAL"] and dist_warning:
                     print(f"          ⚠️ WARNING: {dist_warning}")
             
-            # Detailed Breakdown for Stakeholders
-            print(f"       🧠 WHY THIS STOCK? (Analysis Breakdown)")
-            print(f"       ---------------------------------------")
-            print(f"       1. Verdict: {stock.verdict_reason}")
+            # Verdict
+            print(f"       🧠 Verdict: {stock.verdict_reason}")
             
             # Pillar Scores
-            print(f"       2. Pillar Scores:")
-            print(f"          • Broker/Inst: {stock.pillar1_broker:.1f}/{max_broker:.0f} (Buyer Dominance: {stock.buyer_dominance_pct:.1f}%)")
-            print(f"          • Unlock Risk: {stock.pillar2_unlock:.1f}/{max_unlock:.0f} (Locked: {stock.locked_percentage:.1f}%)")
-            print(f"          • Fundamental: {stock.pillar3_fundamental:.1f}/{max_fund:.0f} (PE: {stock.pe_ratio:.1f})")
-            print(f"          • Technicals:  {stock.pillar4_technical:.1f}/{max_tech:.0f} (RSI: {stock.rsi:.1f})")
-            
-            # Specific Reasons
-            if hasattr(stock, 'breakdown'):
-                if stock.breakdown.technical_reasons:
-                    print(f"       3. Key Signals: {', '.join(stock.breakdown.technical_reasons[:2])}")
-                if stock.breakdown.bonuses:
-                    print(f"       4. Bonuses: {', '.join(stock.breakdown.bonuses)}")
+            print(f"       📊 Pillars: Broker {stock.pillar1_broker:.1f}/{max_broker:.0f} | Unlock {stock.pillar2_unlock:.1f}/{max_unlock:.0f} | Fund {stock.pillar3_fundamental:.1f}/{max_fund:.0f} | Tech {stock.pillar4_technical:.1f}/{max_tech:.0f}")
             
             # Show News & AI details if available
-            if hasattr(stock, 'news_headlines') and stock.news_headlines:
-                print(f"       📰 News Analysis: {stock.news_sentiment} ({len(stock.news_headlines)} articles)")
-            
             if hasattr(stock, 'ai_verdict') and stock.ai_verdict:
-                print(f"       🤖 AI Analyst Verdict: {stock.ai_verdict}")
-                if hasattr(stock, 'ai_summary') and stock.ai_summary:
-                    print(f"          Summary: \"{stock.ai_summary}\"")
-                if hasattr(stock, 'ai_risks') and stock.ai_risks:
-                    print(f"          Risks: \"{stock.ai_risks}\"")
+                print(f"       🤖 AI Verdict: {stock.ai_verdict}")
         
-        # Add Stakeholder Report
-        self._print_stakeholder_report(results, total_analyzed=50 if quick_mode else 299, strategy=strategy)
+        # Add Stakeholder Report with classification summary
+        self._print_stakeholder_report_with_classification(
+            results, good_setups, risky_watch, paper_only,
+            total_analyzed=50 if quick_mode else 299, strategy=strategy
+        )
         
         return {
             "success": True,
