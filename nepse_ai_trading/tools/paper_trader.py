@@ -68,110 +68,88 @@ class PaperTrade:
     hold_days: int = 0
 
 
-def classify_stock_risk(stock) -> dict:
+def classify_stock_risk(stock, screener=None) -> dict:
     """
-    🎯 RISK CLASSIFICATION ENGINE
-    
-    Classifies stocks into GOOD vs RISKY based on:
-    - EPS (negative = risky)
-    - ROE (negative = risky)  
-    - RSI (overbought >70 = risky)
-    - Distribution risk (HIGH/CRITICAL = risky)
-    
-    Philosophy:
-    - NEVER hide any momentum-qualified stock from scan
-    - BUT restrict auto-entry recommendations for risky setups
-    - User always sees the opportunity, makes informed choice
-    
-    Returns:
-        dict with:
-        - risk_tier: "GOOD" | "RISKY" | "PAPER_ONLY"
-        - risk_reasons: list of specific concerns
-        - position_guidance: recommended position sizing
-        - entry_allowed: whether to show auto-entry suggestion
+    Hard-veto validation after momentum scoring.
+
+    Rules (for momentum >= 70):
+    - RSI must be 40-70
+    - EPS must be > 0
+    - ROE must be >= 0
+    - Price must be <= 10% above 14D VWAP
+    Any failed rule => VETOED (no auto real-money entry).
     """
-    risk_reasons = []
-    risk_tier = "GOOD"
-    
-    # Extract metrics
-    eps = getattr(stock, 'eps', 0)
-    roe = getattr(stock, 'roe', 0)
-    pe = getattr(stock, 'pe_ratio', 0)
-    rsi = getattr(stock, 'rsi', 50)
-    score = getattr(stock, 'total_score', 0)
-    dist_risk = getattr(stock, 'distribution_risk', 'LOW')
-    
-    # ===== FUNDAMENTAL RED FLAGS =====
+    score = float(getattr(stock, "total_score", 0) or 0)
+    eps = float(getattr(stock, "eps", 0) or 0)
+    roe = float(getattr(stock, "roe", 0) or 0)
+    pe = float(getattr(stock, "pe_ratio", 0) or 0)
+    rsi = float(getattr(stock, "rsi", 50) or 50)
+    current_price = float(getattr(stock, "ltp", 0) or 0)
+
+    veto_reasons = []
+
+    # Signal 1: RSI gate
+    if rsi > 70:
+        veto_reasons.append(f"RSI overbought ({rsi:.1f})")
+    elif rsi < 40:
+        veto_reasons.append(f"RSI below momentum zone ({rsi:.1f})")
+
+    # Signal 2: EPS gate
     if eps <= 0:
-        risk_reasons.append(f"❌ Negative EPS (Rs. {eps:.2f})")
-        risk_tier = "RISKY"
-    
+        veto_reasons.append(f"Negative EPS (Rs. {eps:.2f})")
+
+    # Signal 3: ROE gate
     if roe < 0:
-        risk_reasons.append(f"❌ Negative ROE ({roe:.1f}%)")
-        risk_tier = "RISKY"
-    elif roe < 5 and roe >= 0:
-        risk_reasons.append(f"⚠️ Very low ROE ({roe:.1f}%)")
-    
-    if pe < 0:
-        risk_reasons.append(f"❌ Negative PE ({pe:.1f})")
-        risk_tier = "RISKY"
-    elif pe > 50:
-        risk_reasons.append(f"⚠️ Very high PE ({pe:.1f})")
-    
-    # ===== TECHNICAL RED FLAGS =====
-    if rsi > 75:
-        risk_reasons.append(f"🔴 Extremely overbought (RSI {rsi:.1f})")
-        risk_tier = "PAPER_ONLY"  # Most dangerous
-    elif rsi > 70:
-        risk_reasons.append(f"⚠️ Overbought (RSI {rsi:.1f})")
-        if risk_tier == "GOOD":
-            risk_tier = "RISKY"
-    elif rsi < 30:
-        risk_reasons.append(f"⚠️ Oversold (RSI {rsi:.1f})")
-    
-    # ===== DISTRIBUTION RED FLAGS =====
-    if dist_risk == "CRITICAL":
-        risk_reasons.append("🚨 CRITICAL distribution risk - operators dumping")
-        risk_tier = "PAPER_ONLY"
-    elif dist_risk == "HIGH":
-        risk_reasons.append("⚠️ HIGH distribution risk")
-        if risk_tier == "GOOD":
-            risk_tier = "RISKY"
-    
-    # ===== DETERMINE ENTRY GUIDANCE =====
-    if risk_tier == "PAPER_ONLY":
-        entry_allowed = False
-        position_guidance = "PAPER TRADE ONLY - Do NOT use real money"
-    elif risk_tier == "RISKY":
-        entry_allowed = True  # Show entry but with warnings
-        position_guidance = "TINY SIZE ONLY (2-3% of portfolio max)"
+        veto_reasons.append(f"Negative ROE ({roe:.1f}%)")
+
+    # Signal 4: VWAP premium gate (14D)
+    vwap_14d = None
+    if screener:
+        try:
+            df = screener.fetcher.fetch_price_history(stock.symbol, days=20)
+            if df is not None and not df.empty and len(df) >= 5:
+                df = df.tail(14)
+                total_volume = float(df["volume"].sum())
+                if total_volume > 0:
+                    typical_price = (df["high"] + df["low"] + df["close"]) / 3
+                    vwap_14d = float((typical_price * df["volume"]).sum() / total_volume)
+        except Exception:
+            vwap_14d = None
+
+    if vwap_14d and vwap_14d > 0 and current_price > 0:
+        vwap_premium_pct = ((current_price / vwap_14d) - 1) * 100
+        if vwap_premium_pct > 10:
+            veto_reasons.append(f"Price overextended vs 14D VWAP (+{vwap_premium_pct:.1f}%)")
     else:
-        # GOOD tier
-        if score >= 80:
-            position_guidance = "Normal position (5-7% of portfolio)"
-        else:
-            position_guidance = "Small position (3-5% of portfolio)"
+        veto_reasons.append("14D VWAP unavailable")
+        vwap_premium_pct = 0.0
+
+    if score < 70:
+        risk_tier = "NOT_QUALIFIED"
+        entry_allowed = False
+        position_guidance = "Not qualified for momentum setup"
+    elif veto_reasons:
+        risk_tier = "VETOED"
+        entry_allowed = False
+        position_guidance = "RISKY - paper-trade / 1% size only"
+    else:
+        risk_tier = "GOOD"
         entry_allowed = True
-    
-    # ===== IDEAL SETUP CHECK =====
-    # Perfect momentum setup: Score ≥70, EPS>0 OR ROE≥0, RSI 40-70
-    is_ideal = (
-        score >= 70 and
-        (eps > 0 or roe >= 0) and
-        40 <= rsi <= 70 and
-        dist_risk in ["LOW", "MEDIUM"]
-    )
-    
+        position_guidance = "GOOD - suitable for small-position real-trade"
+
     return {
         "risk_tier": risk_tier,
-        "risk_reasons": risk_reasons,
+        "risk_reasons": veto_reasons,
         "position_guidance": position_guidance,
         "entry_allowed": entry_allowed,
-        "is_ideal_setup": is_ideal,
+        "is_ideal_setup": (risk_tier == "GOOD"),
         "eps": eps,
         "roe": roe,
         "rsi": rsi,
         "pe": pe,
+        "vwap_14d": vwap_14d or 0.0,
+        "current_price": current_price,
+        "vwap_premium_pct": vwap_premium_pct if "vwap_premium_pct" in locals() else 0.0,
     }
 
 
@@ -348,13 +326,13 @@ class PaperTrader:
             print("")
 
     def _print_stakeholder_report_with_classification(
-        self, 
-        results: List[ScreenedStock], 
+        self,
+        results: List[ScreenedStock],
         good_setups: List[ScreenedStock],
-        risky_watch: List[ScreenedStock],
-        paper_only: List[ScreenedStock],
-        total_analyzed: int, 
-        strategy: str = "value"
+        vetoed_watch: List[ScreenedStock],
+        not_qualified: List[ScreenedStock],
+        total_analyzed: int,
+        strategy: str = "value",
     ):
         """
         Print a narrative report with risk classification for stakeholders.
@@ -375,31 +353,30 @@ class PaperTrader:
         print(f"\n📊 SUMMARY STATISTICS:")
         print(f"   Universe Screened:     {total_analyzed} stocks")
         print(f"   Momentum Qualified:    {len(results)} stocks (Score ≥ 75)")
-        print(f"   ✅ Good Setups:         {len(good_setups)} (safe for real trades)")
-        print(f"   ⚠️ Risky Watch:         {len(risky_watch)} (tiny size only)")
-        print(f"   🚫 Paper Only:          {len(paper_only)} (do NOT trade)")
+        print(f"   ✅ Good Setups:         {len(good_setups)} (real-trade eligible)")
+        print(f"   ❌ Vetoed Risky:        {len(vetoed_watch)} (no auto-entry)")
+        print(f"   ⚪ Not Qualified:       {len(not_qualified)} (score < 70)")
         
         # Good Setups Criteria
-        print(f"\n🎯 GOOD SETUP CRITERIA:")
+        print(f"\n🎯 GOOD SETUP CRITERIA (All 4 must pass):")
         print(f"   A stock is classified as 'GOOD' when ALL conditions are met:")
         print(f"   • Momentum Score ≥ 70")
-        print(f"   • EPS > 0 OR ROE ≥ 0 (company not losing money)")
-        print(f"   • RSI between 40-70 (not overbought)")
-        print(f"   • Distribution Risk: LOW or MEDIUM (operators not dumping)")
+        print(f"   • RSI between 40-70")
+        print(f"   • EPS > 0")
+        print(f"   • ROE ≥ 0")
+        print(f"   • Price ≤ 10% above 14D VWAP")
         
         # Risky Watch Criteria
-        print(f"\n⚠️ RISKY WATCH CRITERIA:")
-        print(f"   A stock is 'RISKY' when score ≥ 70 BUT has red flags:")
-        print(f"   • Negative EPS (company losing money)")
-        print(f"   • Negative ROE (poor capital efficiency)")
-        print(f"   • RSI > 70 (overbought - may correct)")
-        print(f"   • Distribution Risk: HIGH (operators may dump)")
+        print(f"\n❌ VETOED CRITERIA:")
+        print(f"   A stock is 'VETOED' when score ≥ 70 BUT 1+ hard signals fail:")
+        print(f"   • RSI outside 40-70")
+        print(f"   • EPS ≤ 0")
+        print(f"   • ROE < 0")
+        print(f"   • Price > 10% above 14D VWAP")
         
         # Paper Only Criteria
-        print(f"\n🚫 PAPER ONLY CRITERIA:")
-        print(f"   Extremely dangerous setups - paper trade only:")
-        print(f"   • RSI > 75 (extremely overbought)")
-        print(f"   • Distribution Risk: CRITICAL (active dumping)")
+        print(f"\n⚪ NOT QUALIFIED CRITERIA:")
+        print(f"   • Momentum score < 70")
         
         # Good Setups Detail
         if good_setups:
@@ -414,27 +391,25 @@ class PaperTrader:
                 if risk_class.get('is_ideal_setup'):
                     print(f"       ⭐ IDEAL SETUP - All 4 conditions met perfectly")
         
-        # Risky Watch Detail
-        if risky_watch:
+        # Vetoed Detail
+        if vetoed_watch:
             print(f"\n" + "-" * 70)
-            print(f"⚠️ RISKY WATCH - Trade Only with Strict Risk Management")
+            print(f"❌ VETOED RISKY - No Real-Money Auto Entry")
             print("-" * 70)
-            for i, stock in enumerate(risky_watch, 1):
+            for i, stock in enumerate(vetoed_watch, 1):
                 risk_class = getattr(stock, '_risk_class', {})
                 print(f"\n   #{i} {stock.symbol} ({stock.total_score:.0f}/100)")
-                print(f"       Why Risky: {', '.join(risk_class.get('risk_reasons', []))}")
-                print(f"       Guidance: {risk_class.get('position_guidance', 'Tiny size only')}")
+                print(f"       Failed Signals: {', '.join(risk_class.get('risk_reasons', []))}")
+                print(f"       Guidance: {risk_class.get('position_guidance', 'Paper-trade / 1% size only')}")
         
-        # Paper Only Detail
-        if paper_only:
+        # Not Qualified Detail
+        if not_qualified:
             print(f"\n" + "-" * 70)
-            print(f"🚫 PAPER ONLY - Do NOT Use Real Money")
+            print(f"⚪ NOT QUALIFIED - Score below momentum threshold")
             print("-" * 70)
-            for i, stock in enumerate(paper_only, 1):
-                risk_class = getattr(stock, '_risk_class', {})
+            for i, stock in enumerate(not_qualified, 1):
                 print(f"\n   #{i} {stock.symbol} ({stock.total_score:.0f}/100)")
-                print(f"       Critical Risks: {', '.join(risk_class.get('risk_reasons', []))}")
-                print(f"       Use For: Learning, paper trading, watchlist only")
+                print(f"       Status: Not qualified for momentum setup")
         
         # Philosophy Note
         print(f"\n" + "=" * 70)
@@ -601,20 +576,20 @@ class PaperTrader:
         # ========== RISK CLASSIFICATION ==========
         # Classify each stock into GOOD vs RISKY tiers
         # Philosophy: NEVER hide momentum-qualified stocks, but restrict auto-entry for risky setups
-        good_setups = []  # EPS>0 OR ROE≥0, RSI 40-70, LOW/MEDIUM dump risk
-        risky_watch = []  # EPS≤0 OR ROE<0, RSI>70, or HIGH/CRITICAL dump risk
-        paper_only = []   # Extremely risky (RSI>75, CRITICAL dump risk)
+        good_setups = []     # Momentum>=70 and all 4 veto signals pass
+        vetoed_watch = []    # Momentum>=70 but one or more veto signals failed
+        not_qualified = []   # Momentum<70 (kept visible in detailed section)
         
         for stock in results:
-            risk_class = classify_stock_risk(stock)
+            risk_class = classify_stock_risk(stock, screener=screener)
             stock._risk_class = risk_class  # Attach for later use
             
-            if risk_class["risk_tier"] == "PAPER_ONLY":
-                paper_only.append(stock)
-            elif risk_class["risk_tier"] == "RISKY":
-                risky_watch.append(stock)
-            else:
+            if risk_class["risk_tier"] == "GOOD":
                 good_setups.append(stock)
+            elif risk_class["risk_tier"] == "VETOED":
+                vetoed_watch.append(stock)
+            else:
+                not_qualified.append(stock)
         
         # Print summary
         print("\n" + "=" * 70)
@@ -622,13 +597,13 @@ class PaperTrader:
         print("=" * 70)
         print(f"Market Regime: {'🐻 BEAR' if is_bear else '🐂 BULL'}")
         print(f"Stocks Analyzed: {50 if quick_mode else 299} | Momentum Qualified: {len(results)}")
-        print(f"   ✅ Good Setups: {len(good_setups)} | ⚠️ Risky Watch: {len(risky_watch)} | 🚫 Paper Only: {len(paper_only)}")
+        print(f"   ✅ Good Setups: {len(good_setups)} | ❌ Vetoed Risky: {len(vetoed_watch)} | ⚪ Not Qualified: {len(not_qualified)}")
         
         # ========== SECTION 1: GOOD SETUPS (Real-money tradeable) ==========
         if good_setups:
             print("\n" + "=" * 70)
             print("✅ GOOD SETUPS (Suitable for small-position real trades)")
-            print("   These stocks have: Score≥70, EPS>0 OR ROE≥0, RSI 40-70, LOW dump risk")
+            print("   These stocks passed all hard-veto checks: RSI, EPS, ROE, VWAP premium")
             print("=" * 70)
             
             for rank, stock in enumerate(good_setups, 1):
@@ -646,47 +621,37 @@ class PaperTrader:
                 if risk_class.get('is_ideal_setup'):
                     print(f"       ⭐ IDEAL SETUP - All conditions met!")
         
-        # ========== SECTION 2: RISKY WATCH (Trade with caution) ==========
-        if risky_watch:
+        # ========== SECTION 2: VETOED RISKY (No auto-entry) ==========
+        if vetoed_watch:
             print("\n" + "=" * 70)
-            print("⚠️ RISKY WATCH (Momentum qualified BUT has red flags)")
-            print("   Trade only with TINY size (2-3% max) and strict stop loss")
+            print("❌ VETOED – RISKY (Momentum score is high but hard-veto failed)")
+            print("   No real-money auto-entry. Paper-trade / 1% size only.")
             print("=" * 70)
             
-            for rank, stock in enumerate(risky_watch, 1):
+            for rank, stock in enumerate(vetoed_watch, 1):
                 risk_class = stock._risk_class
                 raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
-                print(f"\n   #{rank} {stock.symbol:<10} Score: {stock.total_score:.0f}/100 {raw_info}")
+                print(f"\n   #{rank} {stock.symbol:<10} ❌ VETOED | Score: {stock.total_score:.0f}/100 {raw_info}")
                 
-                # Show reasons WHY it's risky
-                print(f"       🚩 RISK FLAGS:")
+                print(f"       🚩 FAILED SIGNALS:")
                 for reason in risk_class['risk_reasons']:
                     print(f"          {reason}")
                 
-                # Show entry IF allowed, but with clear warning
-                if risk_class['entry_allowed']:
-                    print(f"       💰 Entry: Rs.{stock.entry_price_with_slippage:.2f} | 🎯 Target: Rs.{stock.target_price:.2f} | 🛑 Stop: Rs.{stock.stop_loss_with_slippage:.2f}")
-                    print(f"       ⚠️ CAUTION: {risk_class['position_guidance']}")
-                else:
-                    print(f"       🚫 NO AUTO-ENTRY - Use analyze_single_stock for full report")
+                print(f"       🚫 NO AUTO-ENTRY - {risk_class['position_guidance']}")
                 
-                print(f"       📊 RSI: {stock.rsi:.1f} | EPS: Rs.{risk_class['eps']:.2f} | ROE: {risk_class['roe']:.1f}%")
+                print(f"       📊 RSI: {stock.rsi:.1f} | EPS: Rs.{risk_class['eps']:.2f} | ROE: {risk_class['roe']:.1f}% | VWAP Premium: +{risk_class.get('vwap_premium_pct', 0):.1f}%")
         
-        # ========== SECTION 3: PAPER ONLY (Do NOT use real money) ==========
-        if paper_only:
+        # ========== SECTION 3: NOT QUALIFIED ==========
+        if not_qualified:
             print("\n" + "=" * 70)
-            print("🚫 PAPER ONLY (Do NOT use real money on these)")
-            print("   Extremely overbought (RSI>75) or CRITICAL distribution risk")
+            print("⚪ NOT QUALIFIED (Momentum < 70)")
+            print("   Visible for transparency, but not actionable.")
             print("=" * 70)
             
-            for rank, stock in enumerate(paper_only, 1):
+            for rank, stock in enumerate(not_qualified, 1):
                 risk_class = stock._risk_class
                 print(f"\n   #{rank} {stock.symbol:<10} Score: {stock.total_score:.0f}/100")
-                print(f"       🚩 CRITICAL RISKS:")
-                for reason in risk_class['risk_reasons']:
-                    print(f"          {reason}")
-                print(f"       📊 RSI: {stock.rsi:.1f} | EPS: Rs.{risk_class['eps']:.2f} | ROE: {risk_class['roe']:.1f}%")
-                print(f"       📝 Use for: Paper trading practice, learning, watchlist only")
+                print(f"       Status: Not qualified for momentum setup")
         
         # ========== DETAILED ANALYSIS (for all stocks) ==========
         print("\n" + "=" * 70)
@@ -695,7 +660,7 @@ class PaperTrader:
         
         for rank, stock in enumerate(results, 1):
             risk_class = stock._risk_class
-            tier_emoji = {"GOOD": "✅", "RISKY": "⚠️", "PAPER_ONLY": "🚫"}.get(risk_class["risk_tier"], "❓")
+            tier_emoji = {"GOOD": "✅", "VETOED": "❌", "NOT_QUALIFIED": "⚪"}.get(risk_class["risk_tier"], "❓")
             raw_info = f"(Raw: {stock.raw_score:.1f})" if hasattr(stock, 'raw_score') and stock.raw_score > 100 else ""
             print(f"\n   #{rank} {stock.symbol:<10} {tier_emoji} {risk_class['risk_tier']} | Score: {stock.total_score:.0f}/100 {raw_info}")
             
@@ -708,8 +673,8 @@ class PaperTrader:
             if dist_risk and dist_risk != "N/A":
                 risk_emoji = {"LOW": "✅", "MEDIUM": "⚡", "HIGH": "⚠️", "CRITICAL": "🚨"}.get(dist_risk, "❓")
                 print(f"       {risk_emoji} DISTRIBUTION RISK: {dist_risk}")
-                lookback = "14D" if strategy == "momentum" else "20D"
-                print(f"          {lookback} VWAP: Rs.{vwap_cost:.2f} | Price Above VWAP: +{broker_profit:.1f}%")
+                # Always use 1M for broker avg cost (fixed bug: was using 1W for momentum)
+                print(f"          1M Broker Avg: Rs.{vwap_cost:.2f} | Broker Profit: +{broker_profit:.1f}%")
                 if dist_risk in ["HIGH", "CRITICAL"] and dist_warning:
                     print(f"          ⚠️ WARNING: {dist_warning}")
             
@@ -725,7 +690,7 @@ class PaperTrader:
         
         # Add Stakeholder Report with classification summary
         self._print_stakeholder_report_with_classification(
-            results, good_setups, risky_watch, paper_only,
+            results, good_setups, vetoed_watch, not_qualified,
             total_analyzed=50 if quick_mode else 299, strategy=strategy
         )
         
@@ -1220,30 +1185,40 @@ class PaperTrader:
         except Exception:
             pass
         
-        # Get top broker holdings (for transparency)
+        # Get top broker holdings with full metadata (for transparency)
         top_brokers_data = []
-        broker_data_duration = "1W"  # Default to 1 week
+        broker_data_duration = "1M"  # Use 1M for proper accumulation analysis
+        broker_date_range = ""
+        broker_total_volume = 0
+        broker_total_transactions = 0
+        
         try:
-            # Try 1W first (more relevant for swing trading)
-            broker_analysis = screener.sharehub.get_broker_analysis(symbol, duration="1W")
-            if broker_analysis:
+            # Use 1M data for comprehensive broker analysis
+            broker_response = screener.sharehub.get_broker_analysis_full(symbol, duration="1M")
+            if broker_response and broker_response.brokers:
                 # Sort by net buy (positive = accumulating)
                 top_brokers_data = sorted(
-                    broker_analysis, 
+                    broker_response.brokers, 
                     key=lambda b: b.net_quantity, 
                     reverse=True
                 )[:5]  # Top 5 brokers
-                broker_data_duration = "1W"
+                broker_data_duration = "1M"
+                broker_date_range = broker_response.date_range
+                broker_total_volume = broker_response.total_quantity
+                broker_total_transactions = broker_response.total_transactions
             else:
-                # Fallback to 1D
-                broker_analysis = screener.sharehub.get_broker_analysis(symbol, duration="1D")
-                if broker_analysis:
+                # Fallback to 1W
+                broker_response = screener.sharehub.get_broker_analysis_full(symbol, duration="1W")
+                if broker_response and broker_response.brokers:
                     top_brokers_data = sorted(
-                        broker_analysis, 
+                        broker_response.brokers, 
                         key=lambda b: b.net_quantity, 
                         reverse=True
                     )[:5]
-                    broker_data_duration = "1D"
+                    broker_data_duration = "1W"
+                    broker_date_range = broker_response.date_range
+                    broker_total_volume = broker_response.total_quantity
+                    broker_total_transactions = broker_response.total_transactions
         except Exception as e:
             logger.debug(f"Could not fetch broker analysis for {symbol}: {e}")
         
@@ -1675,21 +1650,55 @@ class PaperTrader:
         if best_result.distribution_risk:
             risk_emoji = {"LOW": "✅", "MEDIUM": "🟡", "HIGH": "⚠️", "CRITICAL": "🚨"}.get(best_result.distribution_risk, "❓")
             print(f"   {risk_emoji} Dump Risk Level: {best_result.distribution_risk}")
-            print(f"   Broker Avg Cost:    Rs. {best_result.broker_avg_cost:.2f}")
+            
+            # Show dual timeframe analysis
+            print()
+            print("   📅 DUAL TIMEFRAME ANALYSIS (Expert Rule)")
+            print("   " + "-" * 50)
+            
+            # 1-Month baseline
+            net_1m = getattr(best_result, 'net_holdings_1m', 0)
+            print(f"   1-MONTH (Baseline): Avg Rs. {best_result.broker_avg_cost:.2f} | Net: {net_1m:+,} shares")
+            if net_1m > 0:
+                print(f"      → 🟢 ACCUMULATING over 1 month")
+            elif net_1m < 0:
+                print(f"      → 🔴 DISTRIBUTING over 1 month")
+            
+            # 1-Week fine-tune
+            avg_1w = getattr(best_result, 'broker_avg_cost_1w', 0)
+            net_1w = getattr(best_result, 'net_holdings_1w', 0)
+            if avg_1w and avg_1w > 0:
+                print(f"   1-WEEK (Fine-tune): Avg Rs. {avg_1w:.2f} | Net: {net_1w:+,} shares")
+                if net_1w > 0:
+                    print(f"      → 🟢 ACCUMULATING this week")
+                elif net_1w < 0:
+                    print(f"      → 🔴 DISTRIBUTING this week")
+            
+            dual_pass = (net_1m > 0 and net_1w > 0)
+            print()
+            if dual_pass:
+                print("   📊 DUAL TIMEFRAME: ✅ PASS (accumulation confirmed both timeframes)")
+            else:
+                print("   📊 DUAL TIMEFRAME: ⚠️ MIXED/FAIL (accumulation not confirmed both timeframes)")
+            if best_result.distribution_risk in ["HIGH", "CRITICAL"]:
+                print(f"      ⚠️ But {best_result.distribution_risk} intraday distribution risk overrides.")
+            
+            # Divergence warning
+            if getattr(best_result, 'distribution_divergence', False):
+                print()
+                print("   ⚠️ DIVERGENCE DETECTED!")
+                print("      1M shows accumulation but 1W shows distribution.")
+                print("      → Brokers may be starting to EXIT their positions.")
+                print("      → Avoid new entries. Consider reducing existing positions.")
+            
+            print()
             print(f"   Current LTP:        Rs. {best_result.ltp:.2f}")
             print(f"   Broker Profit:      +{best_result.broker_profit_pct:.1f}%")
-            
-            # Determine lookback period for context
-            lookback_text = "~1 month" if strategy == "momentum" and hasattr(best_result, 'intraday_dump_detected') else "recent period"
             
             # Enhanced explanation based on risk level
             if best_result.distribution_risk in ["HIGH", "CRITICAL"]:
                 print()
                 print(f"   {risk_emoji} {best_result.distribution_risk} RISK: Distribution pattern detected!")
-                print()
-                print("   💡 Key Context:")
-                print(f"      • Brokers accumulated this position over {lookback_text}.")
-                print(f"      • Broker avg cost: Rs. {best_result.broker_avg_cost:.2f}")
                 
                 # Show intraday dump details if available
                 if getattr(best_result, 'intraday_dump_detected', False) and getattr(best_result, 'today_open_price', 0) > 0:
@@ -1697,6 +1706,7 @@ class PaperTrader:
                     open_vs_broker = best_result.open_vs_broker_pct
                     volume_spike = getattr(best_result, 'intraday_volume_spike', 0)
                     close_vs_vwap = getattr(best_result, 'close_vs_vwap_pct', 0)
+                    drift_word = "UP" if best_result.ltp >= open_price else "DOWN"
                     
                     print()
                     print("   🚨 Today's Intraday Action:")
@@ -1709,14 +1719,10 @@ class PaperTrader:
                     print()
                     print("   ⚠️ Analysis:")
                     print(f"      Smart money likely offloaded shares at open (Rs. {open_price:.2f}),")
-                    print(f"      then price drifted down to close at Rs. {best_result.ltp:.2f}.")
-                    print()
-                    print(f"      Even though final broker profit is only +{best_result.broker_profit_pct:.1f}%,")
-                    print("      the intraday dump pattern shows operators are reducing positions.")
+                    print(f"      then price drifted {drift_word} to close at Rs. {best_result.ltp:.2f}.")
                     print()
                     print("   🔴 Recommendation: Avoid momentum entry until clear re-accumulation appears.")
                 else:
-                    # No intraday data, but still HIGH risk from traditional broker profit check
                     print()
                     print("   ⚠️ Analysis:")
                     print(f"      Brokers are sitting on +{best_result.broker_profit_pct:.1f}% profit.")
@@ -1739,24 +1745,46 @@ class PaperTrader:
         
         # ========== TOP BROKER HOLDINGS (Smart Money Flow) ==========
         print("\n" + "-" * 70)
-        print(f"🏦 TOP BROKER ACTIVITY ({broker_data_duration} data)")
+        print(f"🏦 TOP BROKER ACTIVITY")
         print("-" * 70)
         if top_brokers_data:
-            print("   Broker Code | Broker Name                  | Net Qty   | Buy Qty   | Sell Qty")
-            print("   " + "-" * 75)
+            # Show date range and summary
+            if broker_date_range:
+                print(f"   📅 Data Period: {broker_date_range}")
+            if broker_total_volume > 0:
+                print(f"   📊 Total Volume: {broker_total_volume:,} shares | Transactions: {broker_total_transactions:,}")
+            print()
+            
+            # Calculate average cost for shares still held
+            total_net_holdings = sum(b.net_quantity for b in top_brokers_data if b.net_quantity > 0)
+            total_weighted_cost = 0.0
+            for b in top_brokers_data:
+                if b.net_quantity > 0 and b.buy_quantity > 0:
+                    broker_avg_buy = b.buy_amount / b.buy_quantity
+                    total_weighted_cost += broker_avg_buy * b.net_quantity
+            
+            if total_net_holdings > 0:
+                avg_cost_of_holdings = total_weighted_cost / total_net_holdings
+                print(f"   💰 Top 5 Brokers Avg Cost (Net Holdings): Rs. {avg_cost_of_holdings:.2f}")
+                print()
+            
+            print("   Broker Code | Broker Name                  | Net Qty   | Avg Buy   | Sell Qty")
+            print("   " + "-" * 80)
             for broker in top_brokers_data:
                 net_emoji = "🟢" if broker.net_quantity > 0 else "🔴" if broker.net_quantity < 0 else "⚪"
                 broker_name = broker.broker_name[:28] if len(broker.broker_name) > 28 else broker.broker_name
-                print(f"   {net_emoji} {broker.broker_code:>6} | {broker_name:<28} | {broker.net_quantity:>9,} | {broker.buy_quantity:>9,} | {broker.sell_quantity:>9,}")
+                # Calculate their avg buy price
+                avg_buy = broker.buy_amount / broker.buy_quantity if broker.buy_quantity > 0 else 0
+                print(f"   {net_emoji} {broker.broker_code:>6} | {broker_name:<28} | {broker.net_quantity:>9,} | Rs.{avg_buy:>6.2f} | {broker.sell_quantity:>9,}")
             
             # Calculate totals
             total_net = sum(b.net_quantity for b in top_brokers_data)
             total_buy = sum(b.buy_quantity for b in top_brokers_data)
             total_sell = sum(b.sell_quantity for b in top_brokers_data)
             
-            print("   " + "-" * 75)
+            print("   " + "-" * 80)
             net_emoji = "🟢" if total_net > 0 else "🔴" if total_net < 0 else "⚪"
-            print(f"   {net_emoji} TOP 5 TOTAL:                              | {total_net:>9,} | {total_buy:>9,} | {total_sell:>9,}")
+            print(f"   {net_emoji} TOP 5 TOTAL:                              | {total_net:>9,} |           | {total_sell:>9,}")
             
             if total_net > 0:
                 print(f"\n   ✅ Smart money ACCUMULATING: Top 5 brokers net +{total_net:,} shares")
@@ -1764,6 +1792,11 @@ class PaperTrader:
                 print(f"\n   ⚠️ Smart money DISTRIBUTING: Top 5 brokers net {total_net:,} shares")
             else:
                 print(f"\n   ⚪ Neutral: Top 5 brokers balanced buying/selling")
+            
+            # Educational note about broker data
+            print()
+            print("   💡 Tip: Net Qty = Buy - Sell. Positive means broker is accumulating.")
+            print("      Avg Buy shows the broker's entry price. Compare to LTP for their profit.")
         else:
             print("   Broker activity data not available (requires ShareHub authentication)")
         

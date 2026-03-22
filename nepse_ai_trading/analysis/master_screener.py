@@ -112,9 +112,15 @@ class ScreenedStock:
     
     # DISTRIBUTION RISK (Broker Profit-Taking Detection)
     broker_avg_cost: float = 0.0        # Estimated average cost for accumulated shares
+    broker_avg_cost_1w: float = 0.0     # 1-week avg cost for fine-tune layer
     broker_profit_pct: float = 0.0      # Current price vs average cost (% gain)
     distribution_risk: str = ""         # "LOW", "MEDIUM", "HIGH", "CRITICAL"
     distribution_warning: str = ""      # Detailed explanation for user
+    
+    # DUAL TIMEFRAME ANALYSIS (Expert Rule)
+    net_holdings_1m: int = 0            # Net shares accumulated in 1 month
+    net_holdings_1w: int = 0            # Net shares accumulated in 1 week
+    distribution_divergence: bool = False  # True if 1M accumulating but 1W distributing
     
     # INTRADAY DISTRIBUTION (Sunday Dump Detection)
     intraday_dump_detected: bool = False  # True if pump-and-dump pattern detected today
@@ -1190,41 +1196,93 @@ class MasterStockScreener:
             is_seller_dominant = pf.get("winner") == "Seller" and pf.get("winner_weight", 0) > 55
             seller_weight = pf.get("winner_weight", 0) if pf.get("winner") == "Seller" else 0
             
-            # === DYNAMIC LOOKBACK BASED ON STRATEGY ===
+            # ═══════════════════════════════════════════════════════════════════
+            # DUAL TIMEFRAME BROKER ANALYSIS (Expert Rule-Based System)
+            # ═══════════════════════════════════════════════════════════════════
+            # 
+            # RULE 1: Use 1-MONTH as BASELINE trend
+            #   - Shows overall accumulation/distribution pattern
+            #   - If top brokers net-buying for 1 month → conviction to buy
+            # 
+            # RULE 2: Use 1-WEEK as FINE-TUNE layer
+            #   - Detects recent intraday dumps
+            #   - Volume spikes without price follow-through
+            #   - If 1W shows distribution even though 1M is good → CAUTION
+            # 
+            # RULE 3: Broker data NEVER overrides hard filters
+            #   - RSI > 70 → Overbought, be cautious
+            #   - EPS < 0 → Fundamental weakness
+            #   - Heavy distribution day → Exit signal
+            # 
+            # CALCULATION FIX: Use NET HOLDINGS, not ALL BUYS
+            #   - If broker bought 100K and sold 80K, they hold 20K
+            #   - Avg cost = weighted avg of shares STILL HELD
+            # ═══════════════════════════════════════════════════════════════════
+            
             if self.strategy == "momentum":
-                lookback_days = 14
-                duration = "1W"  # 1 week for broker data
+                vwap_lookback_days = 14  # Short-term VWAP for fallback
             else:
-                lookback_days = 20
-                duration = "1M"  # 1 month for broker data
+                vwap_lookback_days = 20  # Longer-term VWAP for fallback
             
             broker_avg_cost = None
+            broker_avg_cost_1w = None  # For fine-tune layer
             calculation_method = "UNKNOWN"
-            lookback_used = lookback_days
+            lookback_used = vwap_lookback_days
+            net_holdings_1m = 0
+            net_holdings_1w = 0
+            distribution_divergence = False  # 1M accumulating but 1W distributing
             
-            # === METHOD 1: TRY REAL BROKER DATA (Most Accurate) ===
-            # This gives us actual buy prices from floorsheet analysis
+            def _calc_net_holdings_cost(broker_data):
+                """Calculate avg cost for shares STILL HELD (net holdings only)."""
+                if not broker_data:
+                    return None, 0
+                
+                total_weighted_cost = 0.0
+                total_net_holdings = 0
+                
+                for b in broker_data:
+                    if b.net_quantity > 0 and b.buy_quantity > 0:
+                        broker_avg_buy = b.buy_amount / b.buy_quantity
+                        total_weighted_cost += broker_avg_buy * b.net_quantity
+                        total_net_holdings += b.net_quantity
+                
+                if total_net_holdings > 0:
+                    return total_weighted_cost / total_net_holdings, total_net_holdings
+                return None, 0
+            
+            # === FETCH BOTH TIMEFRAMES ===
             try:
                 if self.sharehub_token:
-                    broker_data = self.sharehub.get_broker_analysis(symbol, duration=duration)
-                    if broker_data:
-                        total_buy_amount = sum(b.buy_amount for b in broker_data if b.buy_amount > 0)
-                        total_buy_qty = sum(b.buy_quantity for b in broker_data if b.buy_quantity > 0)
+                    # 1-MONTH: Baseline accumulation trend
+                    broker_data_1m = self.sharehub.get_broker_analysis(symbol, duration="1M")
+                    if broker_data_1m:
+                        broker_avg_cost, net_holdings_1m = _calc_net_holdings_cost(broker_data_1m)
+                        if broker_avg_cost:
+                            calculation_method = "BROKER_NET_HOLDINGS_1M"
+                            logger.debug(f"{symbol}: 1M Avg Cost = Rs.{broker_avg_cost:.2f} ({net_holdings_1m:,} shares held)")
+                    
+                    # 1-WEEK: Fine-tune layer for recent distribution
+                    broker_data_1w = self.sharehub.get_broker_analysis(symbol, duration="1W")
+                    if broker_data_1w:
+                        broker_avg_cost_1w, net_holdings_1w = _calc_net_holdings_cost(broker_data_1w)
+                        if broker_avg_cost_1w:
+                            logger.debug(f"{symbol}: 1W Avg Cost = Rs.{broker_avg_cost_1w:.2f} ({net_holdings_1w:,} shares held)")
+                    
+                    # DIVERGENCE CHECK: 1M accumulating but 1W distributing = RED FLAG
+                    if net_holdings_1m > 0 and net_holdings_1w < 0:
+                        distribution_divergence = True
+                        logger.warning(f"{symbol}: ⚠️ DIVERGENCE: 1M accumulating but 1W distributing!")
                         
-                        if total_buy_qty > 0:
-                            broker_avg_cost = total_buy_amount / total_buy_qty
-                            calculation_method = f"BROKER_DATA_{duration}"
-                            logger.debug(f"{symbol}: Real broker avg cost = Rs.{broker_avg_cost:.2f} from {duration} data")
             except Exception as e:
                 logger.debug(f"Could not fetch broker analysis for {symbol}: {e}")
             
             # === METHOD 2: VWAP FROM PRICE HISTORY (Fallback) ===
             if broker_avg_cost is None or broker_avg_cost <= 0:
                 try:
-                    df = self.fetcher.fetch_price_history(symbol, days=lookback_days + 5)
+                    df = self.fetcher.fetch_price_history(symbol, days=vwap_lookback_days + 5)
                     
                     if df is not None and not df.empty and len(df) >= 5:
-                        df = df.tail(lookback_days)
+                        df = df.tail(vwap_lookback_days)
                         lookback_used = len(df)
                         
                         # Calculate VWAP = Sum(Typical_Price * Volume) / Sum(Volume)
@@ -1273,8 +1331,19 @@ class MasterStockScreener:
             warning = ""
             penalty = 0.0
             
+            # ═══════════════════════════════════════════════════════════════════
+            # DIVERGENCE CHECK (Expert Rule)
+            # If 1M accumulating but 1W distributing → brokers starting to exit
+            # This is a RED FLAG that should increase risk level
+            # ═══════════════════════════════════════════════════════════════════
+            if distribution_divergence:
+                distribution_risk = "HIGH"
+                warning = f"⚠️ Dump Risk: HIGH – 1M accumulating but 1W DISTRIBUTING! Brokers starting to exit. Avoid new entries."
+                penalty = -12.0
+                logger.warning(f"{symbol}: Divergence detected - 1M net {net_holdings_1m:,} vs 1W net {net_holdings_1w:,}")
+            
             # CRITICAL: Seller dominant with high profit → Distribution in progress
-            if is_seller_dominant and broker_profit_pct > 10:
+            elif is_seller_dominant and broker_profit_pct > 10:
                 distribution_risk = "CRITICAL"
                 warning = f"🚨 Dump Risk: CRITICAL – Brokers up {broker_profit_pct:.1f}% AND sellers dominating ({seller_weight:.0f}%). Active distribution in progress!"
                 penalty = -15.0
@@ -1323,6 +1392,7 @@ class MasterStockScreener:
             # Store in cache
             self._distribution_risk_cache[symbol] = {
                 "avg_cost": round(broker_avg_cost, 2),
+                "avg_cost_1w": round(broker_avg_cost_1w, 2) if broker_avg_cost_1w else None,
                 "profit_pct": round(broker_profit_pct, 2),
                 "risk_level": distribution_risk,
                 "warning": warning,
@@ -1331,6 +1401,10 @@ class MasterStockScreener:
                 "seller_weight": seller_weight,
                 "lookback_days": lookback_used,
                 "calculation_method": calculation_method,
+                # Dual timeframe analysis
+                "net_holdings_1m": net_holdings_1m,
+                "net_holdings_1w": net_holdings_1w,
+                "distribution_divergence": distribution_divergence,
                 # New intraday distribution data
                 "intraday_dump_detected": intraday_risk.get("dump_detected", False) if intraday_risk else False,
                 "open_price": intraday_risk.get("open_price", 0) if intraday_risk else 0,
@@ -2054,9 +2128,14 @@ class MasterStockScreener:
         
         if dist_risk:
             result.broker_avg_cost = dist_risk.get("avg_cost", 0)
+            result.broker_avg_cost_1w = dist_risk.get("avg_cost_1w") or 0
             result.broker_profit_pct = dist_risk.get("profit_pct", 0)
             result.distribution_risk = dist_risk.get("risk_level", "N/A")
             result.distribution_warning = dist_risk.get("warning", "")
+            # Dual timeframe analysis
+            result.net_holdings_1m = dist_risk.get("net_holdings_1m", 0)
+            result.net_holdings_1w = dist_risk.get("net_holdings_1w", 0)
+            result.distribution_divergence = dist_risk.get("distribution_divergence", False)
             # New intraday distribution fields
             result.intraday_dump_detected = dist_risk.get("intraday_dump_detected", False)
             result.today_open_price = dist_risk.get("open_price", 0) if "open_price" in dist_risk else 0

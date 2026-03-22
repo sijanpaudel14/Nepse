@@ -299,6 +299,25 @@ class BrokerData:
     net_amount: float = 0.0
 
 
+@dataclass
+class BrokerAnalysisResponse:
+    """
+    Complete broker analysis response with metadata.
+    
+    Contains:
+    - date_range: e.g., "2026-02-22 to 2026-03-22 (16 days)"
+    - total_amount: Total traded amount in the period
+    - total_quantity: Total traded quantity in the period
+    - total_transactions: Number of transactions
+    - brokers: List of BrokerData for each broker
+    """
+    date_range: str
+    total_amount: float
+    total_quantity: int
+    total_transactions: int
+    brokers: List[BrokerData] = field(default_factory=list)
+
+
 class ShareHubAPI:
     """
     ShareHub Nepal API Client.
@@ -1335,6 +1354,95 @@ class ShareHubAPI:
             ))
 
         return brokers
+
+    def get_broker_analysis_full(
+        self,
+        symbol: str,
+        duration: str = "1D"
+    ) -> Optional[BrokerAnalysisResponse]:
+        """
+        Get broker-wise analysis with full metadata (date range, totals).
+
+        REQUIRES AUTHENTICATION TOKEN!
+
+        Args:
+            symbol: Stock symbol
+            duration: "1D", "1W", "1M", "3M", "6M", "1Y"
+
+        Returns:
+            BrokerAnalysisResponse with date_range, totals, and broker list
+            
+        Example:
+            response = api.get_broker_analysis_full("SSHL", duration="1M")
+            print(f"Date Range: {response.date_range}")
+            print(f"Total Qty: {response.total_quantity:,}")
+            for broker in response.brokers[:5]:
+                print(f"  {broker.broker_name}: Net {broker.net_quantity:,}")
+        """
+        self.ensure_valid_token()
+        
+        if not self.auth_token:
+            logger.warning("Auth token required for broker analysis (Login failed)!")
+            return None
+
+        symbol = symbol.upper()
+        url = f"{self.BASE_URL}/data/api/v1/floorsheet-analysis/stockwise-broker-analysis/{symbol}"
+        params = {"duration": duration}
+        referer = f"{self.BASE_URL}/company/{symbol}/broker-analysis"
+
+        response_data = self._get(
+            url,
+            params=params,
+            referer=referer,
+            use_auth_context=True,
+        )
+
+        if not response_data:
+            return None
+
+        # Extract metadata from response
+        inner_data = response_data.get("data", {}) if isinstance(response_data, dict) else {}
+        
+        date_range = inner_data.get("date", "Unknown")
+        total_amount = float(inner_data.get("totalAmount", 0) or 0)
+        total_quantity = int(inner_data.get("totalQuantity", 0) or 0)
+        total_transactions = int(inner_data.get("totalTransactions", 0) or 0)
+        
+        # Parse broker list
+        broker_list = inner_data.get("brokerAnalysisData", [])
+        if not broker_list and "brokerAnalysisData" in response_data:
+            broker_list = response_data.get("brokerAnalysisData", [])
+        
+        brokers = []
+        for item in broker_list:
+            broker_code = item.get("brokerCode") or item.get("brokerId", "")
+            broker_name = item.get("brokerName") or item.get("name", "")
+            
+            buy_qty = int(item.get("buyQty") or item.get("buyQuantity", 0) or 0)
+            sell_qty = int(item.get("sellQty") or item.get("sellQuantity", 0) or 0)
+            buy_amt = float(item.get("buyAmt") or item.get("buyAmount", 0) or 0)
+            sell_amt = float(item.get("sellAmt") or item.get("sellAmount", 0) or 0)
+            net_qty = int(item.get("netQty") or item.get("netQuantity", buy_qty - sell_qty) or 0)
+            net_amt = float(item.get("netAmt") or item.get("netAmount", buy_amt - sell_amt) or 0)
+            
+            brokers.append(BrokerData(
+                broker_code=str(broker_code),
+                broker_name=broker_name,
+                buy_quantity=buy_qty,
+                sell_quantity=sell_qty,
+                buy_amount=buy_amt,
+                sell_amount=sell_amt,
+                net_quantity=net_qty,
+                net_amount=net_amt,
+            ))
+
+        return BrokerAnalysisResponse(
+            date_range=date_range,
+            total_amount=total_amount,
+            total_quantity=total_quantity,
+            total_transactions=total_transactions,
+            brokers=brokers
+        )
 
     def get_broker_accumulation(
         self,
