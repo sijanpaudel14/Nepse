@@ -12,3 +12,5 @@ nepse_ai_trading/analysis/__pycache__
 nepse_ai_trading/api/__pycache__
 **/__pycache__/
 *.pyc
+market_logs
+.pytest_cache
