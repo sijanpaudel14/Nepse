@@ -35,6 +35,18 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import json
 
+# Quiet-by-default logging: only show logs when explicitly requested.
+def _logs_requested(argv: List[str]) -> bool:
+    for i, arg in enumerate(argv):
+        if arg == "--logs=show":
+            return True
+        if arg == "--logs" and i + 1 < len(argv) and argv[i + 1].lower() == "show":
+            return True
+    return False
+
+if not _logs_requested(sys.argv[1:]):
+    os.environ["LOGURU_LEVEL"] = "ERROR"
+
 from loguru import logger
 
 # Add parent directory to path for imports
@@ -3412,8 +3424,77 @@ def main():
         default=None,
         help="Exit price for --sell command"
     )
+    parser.add_argument(
+        "--logs",
+        choices=["show", "hide"],
+        default="hide",
+        help="Logger output mode: 'show' for full logs, 'hide' for quiet mode (default, errors only)."
+    )
+    
+    # ========== ADVANCED INTELLIGENCE COMMANDS ==========
+    parser.add_argument(
+        "--bulk-deals",
+        action="store_true",
+        help="Track large block trades (>1Cr value or 10K+ shares) - insider/promoter activity"
+    )
+    parser.add_argument(
+        "--sector-rotation",
+        action="store_true",
+        help="Weekly sector momentum ranking and rotation signals"
+    )
+    parser.add_argument(
+        "--smart-money",
+        action="store_true",
+        help="Track institutional buying patterns and smart money flow"
+    )
+    parser.add_argument(
+        "--heatmap",
+        action="store_true",
+        help="NEPSE market breadth heatmap - % stocks green/red by sector"
+    )
+    parser.add_argument(
+        "--tech-score",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="Multi-timeframe technical composite score for a stock"
+    )
+    parser.add_argument(
+        "--order-flow",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="Order flow analysis - delta, absorption, liquidity grabs"
+    )
+    parser.add_argument(
+        "--optimize-portfolio",
+        nargs='+',
+        metavar="SYMBOL",
+        help="Optimize portfolio allocation for given symbols (e.g., --optimize-portfolio GVL PPCL NABIL)"
+    )
+    parser.add_argument(
+        "--dividend-forecast",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="Forecast dividend for a stock based on EPS and historical patterns"
+    )
+    parser.add_argument(
+        "--positioning",
+        action="store_true",
+        help="Market-wide quant positioning indicators (%% stocks above SMA)"
+    )
 
     args = parser.parse_args()
+
+    # Enforce runtime logging level for this process and imported modules.
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level="DEBUG" if args.logs == "show" else "ERROR",
+        enqueue=False
+    )
+
     if args.scan:
         args.action = "scan"
     if args.analyze:
@@ -3471,6 +3552,62 @@ def main():
                 logger.debug(f"Could not run scan for portfolio view: {e}")
                 pm.print_status()
             sys.exit(0)
+    
+    # ========== ADVANCED INTELLIGENCE COMMANDS ==========
+    # These are standalone intelligence modules that don't need paper trading database
+    if args.bulk_deals:
+        from intelligence.bulk_deal_analyzer import analyze_bulk_deals
+        report = analyze_bulk_deals(sector=args.sector)
+        print(report)
+        sys.exit(0)
+    
+    if args.sector_rotation:
+        from intelligence.sector_rotation import get_sector_rotation_report
+        report = get_sector_rotation_report()
+        print(report)
+        sys.exit(0)
+    
+    if args.smart_money:
+        from intelligence.smart_money_tracker import get_smart_money_report
+        report = get_smart_money_report(sector=args.sector)
+        print(report)
+        sys.exit(0)
+    
+    if args.heatmap:
+        from intelligence.market_breadth import get_market_heatmap
+        report = get_market_heatmap()
+        print(report)
+        sys.exit(0)
+    
+    if args.tech_score:
+        from intelligence.technical_composite import get_composite_score_report
+        report = get_composite_score_report(args.tech_score)
+        print(report)
+        sys.exit(0)
+    
+    if args.order_flow:
+        from intelligence.order_flow import get_order_flow_report
+        report = get_order_flow_report(args.order_flow)
+        print(report)
+        sys.exit(0)
+    
+    if args.optimize_portfolio:
+        from intelligence.portfolio_optimizer import optimize_portfolio
+        report = optimize_portfolio(args.optimize_portfolio)
+        print(report)
+        sys.exit(0)
+    
+    if args.dividend_forecast:
+        from intelligence.dividend_forecaster import get_dividend_forecast
+        report = get_dividend_forecast(args.dividend_forecast)
+        print(report)
+        sys.exit(0)
+    
+    if args.positioning:
+        from intelligence.quant_positioning import get_positioning_report
+        report = get_positioning_report()
+        print(report)
+        sys.exit(0)
     
     trader = PaperTrader()
     
