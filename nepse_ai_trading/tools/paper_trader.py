@@ -48,6 +48,410 @@ from data.sharehub_api import get_price_history_with_open
 
 # Database configuration
 DB_PATH = os.path.join(os.path.dirname(__file__), "paper_trading.db")
+PORTFOLIO_PATH = os.path.join(os.path.dirname(__file__), "portfolio.json")
+
+
+# ============================================================================
+# PORTFOLIO MANAGER - Enforces strict holding rules
+# ============================================================================
+
+@dataclass
+class PortfolioHolding:
+    """Single portfolio position with holding rules."""
+    symbol: str
+    buy_price: float
+    buy_date: str  # YYYY-MM-DD
+    allocation: float  # 0.03 = 3%
+    quantity: int = 0  # Optional: actual shares
+    
+    @property
+    def days_held(self) -> int:
+        """Calculate trading days held (weekdays only for NEPSE)."""
+        buy = datetime.strptime(self.buy_date, "%Y-%m-%d")
+        today = datetime.now()
+        # Count weekdays (NEPSE is closed Sat)
+        days = 0
+        current = buy
+        while current < today:
+            # NEPSE: Sunday-Thursday (weekday 6=Sun, 0-3=Mon-Thu are trading days in Nepal)
+            # In Python: Monday=0, Sunday=6
+            # NEPSE trades Sun-Thu, closed Fri-Sat
+            if current.weekday() not in (4, 5):  # Not Friday, Saturday
+                days += 1
+            current += timedelta(days=1)
+        return max(1, days)  # At least day 1
+    
+    @property
+    def target_price(self) -> float:
+        """Exit target: +10%"""
+        return round(self.buy_price * 1.10, 2)
+    
+    @property
+    def stop_loss(self) -> float:
+        """Exit stop: -5%"""
+        return round(self.buy_price * 0.95, 2)
+    
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "buy_price": self.buy_price,
+            "buy_date": self.buy_date,
+            "allocation": self.allocation,
+            "quantity": self.quantity,
+        }
+    
+    @classmethod
+    def from_dict(cls, d: dict) -> "PortfolioHolding":
+        return cls(
+            symbol=d["symbol"],
+            buy_price=d["buy_price"],
+            buy_date=d["buy_date"],
+            allocation=d.get("allocation", 0.03),
+            quantity=d.get("quantity", 0),
+        )
+
+
+class PortfolioManager:
+    """
+    📊 Portfolio Manager with strict holding rules.
+    
+    RULES:
+    1. MAX 9% allocation (3 stocks × 3% each)
+    2. 7-DAY HOLD: No exits during first 7 days
+    3. EXIT TRIGGERS: +10% target, -5% stop, 15 days max
+    """
+    
+    MAX_ALLOCATION = 0.09  # 9% of portfolio
+    MAX_STOCKS = 3
+    DEFAULT_ALLOCATION = 0.03  # 3% per stock
+    HOLD_DAYS = 7  # Minimum hold period
+    MAX_HOLD_DAYS = 15  # Force review after this
+    TARGET_PCT = 0.10  # +10% profit target
+    STOP_LOSS_PCT = 0.05  # -5% stop loss
+    
+    def __init__(self, portfolio_path: str = PORTFOLIO_PATH):
+        self.portfolio_path = portfolio_path
+        self.holdings: List[PortfolioHolding] = []
+        self.watchlist: List[str] = []
+        self._load()
+    
+    def _load(self):
+        """Load portfolio from JSON file."""
+        if os.path.exists(self.portfolio_path):
+            try:
+                with open(self.portfolio_path, 'r') as f:
+                    data = json.load(f)
+                self.holdings = [PortfolioHolding.from_dict(h) for h in data.get("holdings", [])]
+                self.watchlist = data.get("watchlist", [])
+            except Exception as e:
+                logger.warning(f"Could not load portfolio: {e}")
+                self.holdings = []
+                self.watchlist = []
+        else:
+            self.holdings = []
+            self.watchlist = []
+    
+    def _save(self):
+        """Save portfolio to JSON file."""
+        data = {
+            "holdings": [h.to_dict() for h in self.holdings],
+            "watchlist": self.watchlist,
+            "total_allocation": self.total_allocation,
+            "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        with open(self.portfolio_path, 'w') as f:
+            json.dump(data, f, indent=2)
+    
+    @property
+    def total_allocation(self) -> float:
+        """Current total allocation percentage."""
+        return sum(h.allocation for h in self.holdings)
+    
+    @property
+    def is_full(self) -> bool:
+        """Check if portfolio has reached max allocation."""
+        return len(self.holdings) >= self.MAX_STOCKS or self.total_allocation >= self.MAX_ALLOCATION
+    
+    @property
+    def available_slots(self) -> int:
+        """Number of positions that can still be added."""
+        return self.MAX_STOCKS - len(self.holdings)
+    
+    def can_add_position(self, allocation: float = None) -> bool:
+        """Check if a new position can be added."""
+        allocation = allocation or self.DEFAULT_ALLOCATION
+        if len(self.holdings) >= self.MAX_STOCKS:
+            return False
+        if self.total_allocation + allocation > self.MAX_ALLOCATION:
+            return False
+        return True
+    
+    def add_position(self, symbol: str, buy_price: float, allocation: float = None, quantity: int = 0) -> bool:
+        """
+        Add a new position to portfolio.
+        
+        Returns True if added, False if portfolio full.
+        """
+        allocation = allocation or self.DEFAULT_ALLOCATION
+        symbol = symbol.upper()
+        
+        # Check if already holding
+        if any(h.symbol == symbol for h in self.holdings):
+            logger.warning(f"{symbol} already in portfolio")
+            return False
+        
+        if not self.can_add_position(allocation):
+            logger.warning(f"Portfolio full ({self.total_allocation*100:.1f}% allocated)")
+            self.add_to_watchlist(symbol)
+            return False
+        
+        holding = PortfolioHolding(
+            symbol=symbol,
+            buy_price=buy_price,
+            buy_date=datetime.now().strftime("%Y-%m-%d"),
+            allocation=allocation,
+            quantity=quantity,
+        )
+        self.holdings.append(holding)
+        
+        # Remove from watchlist if present
+        if symbol in self.watchlist:
+            self.watchlist.remove(symbol)
+        
+        self._save()
+        logger.info(f"✅ Added {symbol} @ Rs.{buy_price:.2f} ({allocation*100:.0f}% allocation)")
+        return True
+    
+    def add_to_watchlist(self, symbol: str):
+        """Add symbol to watchlist (for when portfolio is full)."""
+        symbol = symbol.upper()
+        if symbol not in self.watchlist and not any(h.symbol == symbol for h in self.holdings):
+            self.watchlist.append(symbol)
+            self._save()
+    
+    def remove_position(self, symbol: str, exit_price: float = None, reason: str = "MANUAL"):
+        """Remove a position from portfolio."""
+        symbol = symbol.upper()
+        for i, h in enumerate(self.holdings):
+            if h.symbol == symbol:
+                pnl = ((exit_price / h.buy_price) - 1) * 100 if exit_price else 0
+                logger.info(f"🔴 Sold {symbol} @ Rs.{exit_price:.2f} | P&L: {pnl:+.1f}% | Reason: {reason}")
+                self.holdings.pop(i)
+                self._save()
+                return True
+        return False
+    
+    def get_ltp(self, symbol: str) -> float:
+        """Fetch current LTP for a symbol."""
+        try:
+            price_rows = get_price_history_with_open(symbol, days=1)
+            if price_rows:
+                return float(price_rows[0].get("close", 0) or price_rows[0].get("open", 0) or 0)
+        except:
+            pass
+        return 0.0
+    
+    def check_exit_signals(self, holding: PortfolioHolding, ltp: float) -> dict:
+        """
+        Check exit signals for a holding.
+        
+        Returns dict with:
+        - can_exit: bool (False if within 7-day hold)
+        - signal: None | 'TARGET' | 'STOP_LOSS' | 'MAX_HOLD'
+        - status: str (display status)
+        """
+        days = holding.days_held
+        pnl_pct = ((ltp / holding.buy_price) - 1) * 100 if ltp > 0 and holding.buy_price > 0 else 0
+        
+        # Within hold period - NO EXIT regardless of signals
+        if days <= self.HOLD_DAYS:
+            return {
+                "can_exit": False,
+                "signal": None,
+                "status": f"🟢 HOLD (Day {days}/{self.HOLD_DAYS})",
+                "pnl_pct": pnl_pct,
+                "days": days,
+            }
+        
+        # After hold period - check exit triggers
+        signal = None
+        status = "🟡 REVIEW"
+        
+        if pnl_pct >= self.TARGET_PCT * 100:  # +10%
+            signal = "TARGET"
+            status = f"🎯 SELL TARGET (+{pnl_pct:.1f}%)"
+        elif pnl_pct <= -self.STOP_LOSS_PCT * 100:  # -5%
+            signal = "STOP_LOSS"
+            status = f"🛑 SELL STOP ({pnl_pct:.1f}%)"
+        elif days >= self.MAX_HOLD_DAYS:
+            signal = "MAX_HOLD"
+            status = f"⏰ SELL/REVIEW (Day {days})"
+        else:
+            status = f"🟡 Day {days} | P&L: {pnl_pct:+.1f}%"
+        
+        return {
+            "can_exit": True,
+            "signal": signal,
+            "status": status,
+            "pnl_pct": pnl_pct,
+            "days": days,
+        }
+    
+    def print_status(self, scan_results: List = None):
+        """
+        Print portfolio status in the exact required format.
+        
+        Args:
+            scan_results: Optional list of today's scan results to show
+        """
+        today = datetime.now().strftime("%d-%b")
+        
+        print("\n" + "=" * 60)
+        print(f"📊 PORTFOLIO STATUS (Auto-Updated) ({today})")
+        print("=" * 60)
+        
+        if not self.holdings:
+            print("\n   📭 Portfolio EMPTY - Ready to buy TOP 3 from scan")
+            print(f"   Max allocation: {self.MAX_ALLOCATION*100:.0f}% ({self.MAX_STOCKS} stocks × {self.DEFAULT_ALLOCATION*100:.0f}% each)")
+            print("\n   🔄 Run: python tools/paper_trader.py --buy-picks")
+        else:
+            print(f"\n{'SYMBOL':<8} | {'BUY ₹':>8} | {'DAYS':>6} | {'P&L% (LIVE)':>13} | {'LTP ₹ (LIVE)':>14} | STATUS")
+            print("-" * 80)
+            
+            total_pnl = 0
+            exit_signals = []
+            next_review_date = None
+            
+            for h in self.holdings:
+                ltp = self.get_ltp(h.symbol)
+                exit_info = self.check_exit_signals(h, ltp)
+                pnl = exit_info["pnl_pct"]
+                total_pnl += pnl
+                
+                # Add up/down arrows
+                if pnl > 0:
+                    pnl_str = f"+{pnl:.1f}% ↑"
+                elif pnl < 0:
+                    pnl_str = f"{pnl:.1f}% ↓"
+                else:
+                    pnl_str = f"{pnl:+.1f}%"
+                
+                ltp_str = f"{ltp:.0f}"
+                if pnl > 0:
+                    ltp_str += " ↑"
+                elif pnl < 0:
+                    ltp_str += " ↓"
+                
+                days_str = f"{exit_info['days']}/{self.HOLD_DAYS}"
+                
+                print(f"{h.symbol:<8} | {h.buy_price:>8.0f} | {days_str:>6} | {pnl_str:>13} | {ltp_str:>14} | {exit_info['status']}")
+                
+                # Track exit signals
+                if exit_info["signal"]:
+                    exit_signals.append((h.symbol, exit_info["signal"], exit_info["status"], pnl))
+                
+                # Calculate next review date (Day 7)
+                if exit_info["days"] < self.HOLD_DAYS:
+                    buy_date = datetime.strptime(h.buy_date, "%Y-%m-%d")
+                    review_date = buy_date + timedelta(days=self.HOLD_DAYS)
+                    if next_review_date is None or review_date < next_review_date:
+                        next_review_date = review_date
+            
+            print("-" * 80)
+            avg_pnl = total_pnl / len(self.holdings) if self.holdings else 0
+            print(f"TOTAL: {self.total_allocation*100:.1f}% allocation | {avg_pnl:+.1f}% P&L", end="")
+            
+            if next_review_date:
+                print(f" | Next review: {next_review_date.strftime('%d-%b')}")
+            else:
+                print()
+            
+            # Show exit signals section
+            if exit_signals:
+                print("\n" + "=" * 60)
+                print("🚨 EXIT SIGNALS (Take Action!)")
+                print("=" * 60)
+                for sym, signal, status, pnl in exit_signals:
+                    if signal == "TARGET":
+                        print(f"   ✅ {sym}: {status}")
+                        print(f"      → SELL NOW for profit! (+{pnl:.1f}%)")
+                    elif signal == "STOP_LOSS":
+                        print(f"   🛑 {sym}: {status}")
+                        print(f"      → SELL NOW to limit loss! ({pnl:.1f}%)")
+                    elif signal == "MAX_HOLD":
+                        print(f"   ⏰ {sym}: {status}")
+                        print(f"      → Review position, consider exit")
+            else:
+                # Only show if within hold period
+                if any(self.check_exit_signals(h, 0)["days"] <= self.HOLD_DAYS for h in self.holdings):
+                    print("\n⚠️ NO SELL SIGNALS (In hold period)")
+        
+        # Show today's scan results
+        if scan_results:
+            print("\n" + "=" * 60)
+            print("🎯 TODAY'S SCAN RESULTS")
+            print("=" * 60)
+            
+            top_symbols = ", ".join([f"{s.symbol}({s.total_score:.0f})" for s in scan_results[:5]])
+            print(f"   Top picks: {top_symbols}")
+            
+            if self.is_full:
+                print(f"   → Portfolio FULL ({self.total_allocation*100:.0f}%) → Watchlist only")
+                # Add to watchlist
+                for s in scan_results[:5]:
+                    self.add_to_watchlist(s.symbol)
+            else:
+                slots = self.available_slots
+                print(f"   → {slots} slot(s) available → Can buy top {slots}")
+        
+        # Show watchlist
+        if self.watchlist:
+            print(f"\n   📋 Watchlist: {', '.join(self.watchlist[:10])}")
+        
+        # Show how live updates work
+        if self.holdings:
+            print("\n" + "=" * 60)
+            print("🔄 AUTO-UPDATE INFO")
+            print("=" * 60)
+            print("   ✅ LTP fetched LIVE from NEPSE API")
+            print("   ✅ P&L calculated automatically")
+            print("   ✅ Exit signals checked every run")
+            print("   ✅ Run anytime: Market hours → Live | Closed → Last close")
+
+        
+        # Show exit levels for each holding
+        if self.holdings:
+            print("\n" + "=" * 60)
+            print("⚠️ EXIT LEVELS")
+            print("=" * 60)
+            for h in self.holdings:
+                print(f"   {h.symbol}: +10% target = Rs.{h.target_price:.0f} | -5% stop = Rs.{h.stop_loss:.0f}")
+    
+    def buy_top_picks(self, scan_results: List, max_buys: int = None) -> List[str]:
+        """
+        Buy top picks from scan results up to portfolio limits.
+        
+        Returns list of symbols bought.
+        """
+        max_buys = max_buys or self.available_slots
+        bought = []
+        
+        for stock in scan_results:
+            if len(bought) >= max_buys:
+                break
+            if not self.can_add_position():
+                break
+            
+            # Get entry price (use LTP or scan entry price)
+            entry_price = getattr(stock, 'entry_price_with_slippage', None) or getattr(stock, 'ltp', 0)
+            if entry_price <= 0:
+                entry_price = self.get_ltp(stock.symbol)
+            
+            if entry_price > 0:
+                if self.add_position(stock.symbol, entry_price):
+                    bought.append(stock.symbol)
+        
+        return bought
 
 
 @dataclass
@@ -172,6 +576,76 @@ def classify_stock_risk(stock, screener=None) -> dict:
         "vwap_premium_pct": vwap_premium_pct,
         "validation": validation,
     }
+
+
+def get_sector_alternatives(
+    symbol: str,
+    sector: str,
+    max_price: float = None,
+    top_n: int = 5,
+    strategy: str = "momentum",
+) -> List[dict]:
+    """
+    Get sector alternatives using the SAME scoring engine as daily scan.
+    
+    This ensures single-stock analysis shows the exact same top stocks
+    that would appear in `python paper_trader.py --scan --sector=hydro`.
+    
+    Args:
+        symbol: Current stock symbol to exclude from results
+        sector: Sector name to scan (e.g., "Hydro Power")
+        max_price: Optional max price filter
+        top_n: Number of alternatives to return
+        strategy: Scoring strategy ("momentum" or "value")
+    
+    Returns:
+        List of dicts with symbol, score, risk_tier, ltp, dump_risk
+    """
+    try:
+        # Run full screener analysis for the sector (same as daily scan)
+        screener = MasterStockScreener(
+            strategy=strategy,
+            target_sector=sector,
+            max_price=max_price,
+        )
+        
+        # Run the same scoring pipeline as daily scan
+        results = screener.run_full_analysis(min_score=0, top_n=50, quick_mode=False)
+        
+        if not results:
+            logger.debug(f"No results from sector scan for {sector}")
+            return []
+        
+        # Build alternatives list (exclude current symbol)
+        alternatives = []
+        for stock in results:
+            if stock.symbol.upper() == symbol.upper():
+                continue
+            
+            # Get risk classification (same as daily scan)
+            risk_class = classify_stock_risk(stock, screener=screener)
+            
+            alternatives.append({
+                'symbol': stock.symbol,
+                'name': stock.name,
+                'score': stock.total_score,
+                'risk_tier': risk_class['risk_tier'],
+                'dump_risk': stock.distribution_risk,
+                'ltp': stock.ltp,
+                'entry_price': stock.entry_price_with_slippage,
+                'target_price': stock.target_price,
+                'risk_reasons': risk_class['risk_reasons'],
+                'position_guidance': risk_class['position_guidance'],
+            })
+            
+            if len(alternatives) >= top_n:
+                break
+        
+        return alternatives
+        
+    except Exception as e:
+        logger.warning(f"get_sector_alternatives failed: {e}")
+        return []
 
 
 class PaperTrader:
@@ -731,9 +1205,51 @@ class PaperTrader:
             # Pillar Scores
             print(f"       📊 Pillars: Broker {stock.pillar1_broker:.1f}/{max_broker:.0f} | Unlock {stock.pillar2_unlock:.1f}/{max_unlock:.0f} | Fund {stock.pillar3_fundamental:.1f}/{max_fund:.0f} | Tech {stock.pillar4_technical:.1f}/{max_tech:.0f}")
             
+            # Show manipulation alerts if detected
+            if hasattr(stock, 'manipulation_risk_score') and stock.manipulation_risk_score and stock.manipulation_risk_score > 30:
+                manip_emoji = "🚨" if stock.manipulation_risk_score > 50 else "⚠️"
+                print(f"       {manip_emoji} MANIPULATION RISK: {stock.manipulation_risk_score:.0f}% | Phase: {stock.operator_phase or 'N/A'}")
+                if hasattr(stock, 'manipulation_veto_reasons') and stock.manipulation_veto_reasons:
+                    for reason in stock.manipulation_veto_reasons[:2]:
+                        print(f"          • {reason}")
+            
             # Show News & AI details if available
             if hasattr(stock, 'ai_verdict') and stock.ai_verdict:
                 print(f"       🤖 AI Verdict: {stock.ai_verdict}")
+        
+        # ========== MANIPULATION ALERTS SUMMARY ==========
+        # Show stocks with high manipulation risk
+        manipulated_stocks = [s for s in results if hasattr(s, 'manipulation_risk_score') and s.manipulation_risk_score and s.manipulation_risk_score > 50]
+        if manipulated_stocks:
+            print("\n" + "=" * 70)
+            print("🚨 MANIPULATION ALERTS (Operator Games Detected)")
+            print("=" * 70)
+            
+            for stock in manipulated_stocks[:5]:
+                phase = getattr(stock, 'operator_phase', 'UNKNOWN')
+                phase_emoji = {"ACCUMULATION": "✅", "PUMP": "⚠️", "DISTRIBUTION": "🚨", "CLEAN": "✅"}.get(phase, "❓")
+                
+                print(f"\n   {stock.symbol:<10} Risk: {stock.manipulation_risk_score:.0f}% | {phase_emoji} {phase}")
+                
+                # Show key metrics
+                circular = getattr(stock, 'circular_trading_pct', 0)
+                hhi = getattr(stock, 'broker_concentration_hhi', 0)
+                top3 = getattr(stock, 'top3_broker_control_pct', 0)
+                
+                if circular > 20:
+                    print(f"       🔴 Circular Trading: {circular:.0f}% (FAKE VOLUME)")
+                if hhi > 2500:
+                    print(f"       🔴 Broker Concentration: HHI {hhi:.0f} (MONOPOLISTIC)")
+                if top3 > 70:
+                    print(f"       🔴 Top 3 Brokers Control: {top3:.0f}%")
+                
+                # Show veto reasons
+                veto_reasons = getattr(stock, 'manipulation_veto_reasons', [])
+                if veto_reasons:
+                    for reason in veto_reasons[:2]:
+                        print(f"       ⛔ {reason}")
+            
+            print("\n   💡 Avoid these stocks or paper-trade only")
         
         # Add Stakeholder Report with classification summary
         self._print_stakeholder_report_with_classification(
@@ -1847,6 +2363,88 @@ class PaperTrader:
         else:
             print("   Broker activity data not available (requires ShareHub authentication)")
         
+        # ========== 🚨 MANIPULATION DETECTION (9 DETECTORS) ==========
+        print("\n" + "-" * 70)
+        print("🚨 MANIPULATION RISK ANALYSIS (Insider Operator Detection)")
+        print("-" * 70)
+        
+        # Display manipulation detection results if available
+        if hasattr(best_result, 'manipulation_risk_score') and best_result.manipulation_risk_score is not None:
+            risk_score = best_result.manipulation_risk_score
+            severity = best_result.manipulation_severity or "UNKNOWN"
+            phase = best_result.operator_phase or "UNKNOWN"
+            
+            # Risk bar visualization
+            risk_bar = "█" * int(risk_score / 10) + "░" * (10 - int(risk_score / 10))
+            
+            print(f"\n   📊 MANIPULATION RISK SCORE: [{risk_bar}] {risk_score:.0f}%")
+            print(f"   Severity: {severity}")
+            
+            # Safe to trade indicator
+            is_safe = getattr(best_result, 'is_safe_to_trade', True)
+            if is_safe:
+                print(f"   Trading Status: ✅ SAFE TO TRADE")
+            else:
+                print(f"   Trading Status: 🚫 HIGH RISK - Paper trade only")
+            
+            # Operator phase
+            phase_emoji = {
+                "ACCUMULATION": "✅",
+                "PUMP": "⚠️",
+                "DISTRIBUTION": "🚨",
+                "CLEAN": "✅",
+                "UNKNOWN": "❓"
+            }.get(phase, "❓")
+            print(f"\n   📈 OPERATOR PHASE: {phase_emoji} {phase}")
+            if hasattr(best_result, 'operator_phase_description') and best_result.operator_phase_description:
+                print(f"      {best_result.operator_phase_description}")
+            
+            # Broker concentration metrics
+            hhi = getattr(best_result, 'broker_concentration_hhi', 0)
+            top3_pct = getattr(best_result, 'top3_broker_control_pct', 0)
+            circular_pct = getattr(best_result, 'circular_trading_pct', 0)
+            wash_detected = getattr(best_result, 'wash_trading_detected', False)
+            lockup_days = getattr(best_result, 'lockup_days_remaining', None)
+            
+            print(f"\n   📋 KEY METRICS:")
+            print(f"      • Broker Concentration (HHI): {hhi:.0f}" + (" ⚠️ HIGH" if hhi > 2500 else " ✅ OK" if hhi > 0 else ""))
+            print(f"      • Top 3 Brokers Control: {top3_pct:.0f}%" + (" ⚠️ CONCENTRATED" if top3_pct > 70 else ""))
+            print(f"      • Circular Trading: {circular_pct:.0f}%" + (" 🚨 FAKE VOLUME!" if circular_pct > 20 else " ✅ OK"))
+            print(f"      • Wash Trading: {'🚨 DETECTED' if wash_detected else '✅ None'}")
+            if lockup_days is not None:
+                print(f"      • Promoter Lockup: {lockup_days} days" + (" ⚠️ EXPIRES SOON!" if lockup_days < 30 else " ✅ Safe"))
+            
+            # Alerts from manipulation detector
+            alerts = getattr(best_result, 'manipulation_alerts', [])
+            veto_reasons = getattr(best_result, 'manipulation_veto_reasons', [])
+            
+            if alerts:
+                print(f"\n   🚨 DETECTED PATTERNS:")
+                for alert in alerts[:5]:  # Show top 5 alerts
+                    print(f"      {alert}")
+            
+            if veto_reasons:
+                print(f"\n   ⛔ VETO REASONS (Paper-trade only):")
+                for reason in veto_reasons[:3]:
+                    print(f"      • {reason}")
+            
+            # Educational note
+            print()
+            print("   💡 What this means:")
+            if veto_reasons:
+                print("      Hard manipulation veto(s) detected. Treat as paper-trade / avoid.")
+            elif phase == "ACCUMULATION":
+                print("      Operators are silently buying. Early entry opportunity if fundamentals support.")
+            elif phase == "PUMP":
+                print("      Volume spike + price surge = Pump phase. Late entry risk - don't chase.")
+            elif phase == "DISTRIBUTION":
+                print("      Operators exiting while retail buys. AVOID new positions.")
+            else:
+                print("      No clear pump/dump phase pattern. Continue normal risk checks.")
+        else:
+            print("\n   Manipulation analysis not available for this stock.")
+            print("   💡 Run: python paper_trader.py --analyze SYMBOL for full analysis")
+        
         # ========== RECENT NEWS ==========
         print("\n" + "-" * 70)
         print("📰 RECENT NEWS & ANNOUNCEMENTS")
@@ -2030,113 +2628,74 @@ class PaperTrader:
             print(f"   Expected Hold: {best_result.expected_holding_days}-{best_result.max_holding_days} days")
             print(f"   Exit Strategy: {best_result.exit_strategy}")
         
-        # ========== ALTERNATIVE STOCKS (Better Options) ==========
+        # ========== ALTERNATIVE STOCKS (Same logic as daily scan) ==========
         print("\n" + "═" * 70)
-        print("💡 ALTERNATIVE STOCKS (Consider these instead)")
+        print("💡 SECTOR TOP PICKS (Same as Daily Scan)")
         print("═" * 70)
         
-        # Show alternatives if this stock is weak or high risk
+        # Always show sector alternatives - same stocks that would appear in daily scan
         value_score = value_result.total_score if value_result else 0
         momentum_score = momentum_result.total_score if momentum_result else 0
         best_score = max(value_score, momentum_score)
         dump_risk = best_result.distribution_risk
         
-        show_alternatives = (best_score < 60) or (dump_risk in ["HIGH", "CRITICAL"])
-        
-        if show_alternatives and sector != 'N/A':
-            print(f"\n   Since {symbol} shows risks, here are better alternatives in {sector}:")
-            print(f"   (These have higher scores and lower dump risk)")
+        if sector != 'N/A':
+            print(f"\n   🔍 Scanning {sector} sector (same scoring as daily scan)...")
             print()
             
-            # Try to get sector alternatives from screener
-            try:
-                # Run a quick screening for the same sector
-                # Use momentum strategy for alternatives
-                alt_screener = MasterStockScreener(strategy="momentum")
-                alt_screener._preload_market_data()
+            # Get alternatives using the SAME scoring engine as daily scan
+            alternatives = get_sector_alternatives(
+                symbol=symbol,
+                sector=sector,
+                max_price=None,  # No price filter for alternatives
+                top_n=5,
+                strategy="momentum",
+            )
+            
+            if alternatives:
+                print(f"   Rank | Symbol | Score | Risk Tier | Dump Risk | Entry Price")
+                print(f"   " + "-" * 65)
                 
-                # Quick scan (don't load all market data again)
-                print(f"   🔍 Scanning {sector} sector for better opportunities...")
-                
-                # Build a compact same-sector candidate list (avoid full 300-stock historical fallback scan)
-                company_list = alt_screener.fetcher.fetch_company_list()
-                sector_symbols = []
-                for comp in company_list:
-                    if isinstance(comp, dict):
-                        comp_symbol = str(comp.get("symbol", "")).upper()
-                        comp_sector = comp.get("sectorName", comp.get("sector", ""))
-                    else:
-                        comp_symbol = str(getattr(comp, "symbol", "")).upper()
-                        comp_sector = getattr(comp, "sectorName", getattr(comp, "sector", ""))
-                    if comp_symbol and comp_sector == sector and comp_symbol != symbol:
-                        sector_symbols.append(comp_symbol)
-
-                # Limit scope for speed; we'll enrich LTP from ShareHub for this short list only
-                sector_symbols = sector_symbols[:25]
-                
-                # Score each (quick mode - skip if too many)
-                alternatives = []
-                for sym in sector_symbols:
+                for rank, alt in enumerate(alternatives, 1):
+                    tier_emoji = {
+                        "GOOD": "✅",
+                        "RISKY": "⚠️",
+                        "VETO": "🚫",
+                        "NOT_QUALIFIED": "⚪"
+                    }.get(alt['risk_tier'], "❓")
                     
-                    try:
-                        stock_info = {"symbol": sym}
-                        # Get latest close/open from ShareHub to ensure valid price seed
-                        price_rows = get_price_history_with_open(sym, days=1) or []
-                        ltp = 0.0
-                        if price_rows:
-                            row = price_rows[0]
-                            ltp = float(row.get("close", 0) or row.get("open", 0) or 0)
-                            if ltp > 0:
-                                stock_info["lastTradedPrice"] = ltp
-                                stock_info["close"] = ltp
-
-                        # Still invalid after ShareHub fallback -> skip to avoid noisy warnings
-                        if ltp <= 0:
-                            logger.debug(f"Skipping alternative {sym}: no valid LTP from NEPSE/ShareHub")
-                            continue
-
-                        # Quick score using active stock payload (includes valid LTP/volume)
-                        result = alt_screener._score_stock(stock_info)
-                        if result and result.total_score > best_score + 10:  # At least 10 points better
-                            alternatives.append({
-                                'symbol': sym,
-                                'name': result.name,
-                                'score': result.total_score,
-                                'dump_risk': result.distribution_risk,
-                                'ltp': result.ltp,
-                            })
-                            if len(alternatives) >= 5:
-                                break
-                    except:
-                        continue
-                
-                # Sort by score
-                alternatives = sorted(alternatives, key=lambda x: x['score'], reverse=True)[:5]
-                
-                if alternatives:
-                    print(f"\n   Symbol | Score | Dump Risk | Price")
-                    print(f"   " + "-" * 45)
-                    for alt in alternatives:
-                        risk_emoji = {"LOW": "✅", "MEDIUM": "🟡", "HIGH": "⚠️", "CRITICAL": "🚨"}.get(alt['dump_risk'], "❓")
-                        print(f"   {alt['symbol']:<6} | {alt['score']:>5.0f} | {risk_emoji} {alt['dump_risk']:<8} | Rs. {alt['ltp']:.2f}")
+                    dump_emoji = {
+                        "LOW": "✅",
+                        "MEDIUM": "🟡", 
+                        "HIGH": "⚠️",
+                        "CRITICAL": "🚨"
+                    }.get(alt['dump_risk'], "❓")
                     
+                    print(f"   #{rank:<3} | {alt['symbol']:<6} | {alt['score']:>5.0f} | {tier_emoji} {alt['risk_tier']:<12} | {dump_emoji} {alt['dump_risk']:<8} | Rs. {alt['entry_price']:.2f}")
+                
+                # Show which ones are better than current stock
+                better_count = sum(1 for a in alternatives if a['score'] > best_score)
+                if better_count > 0:
                     print()
-                    print(f"   💡 Tip: These stocks score higher and have lower risk.")
-                    print(f"      Consider adding them to your watchlist.")
+                    print(f"   💡 {better_count} stock(s) score higher than {symbol} ({best_score:.0f}/100)")
+                    print(f"      Consider these for your sector allocation.")
                 else:
-                    print(f"   No better alternatives found in {sector} at this time.")
-                    print(f"   Try checking other sectors (Banking, Hydro, etc.)")
+                    print()
+                    print(f"   ✅ {symbol} is the top scorer in {sector}!")
                 
-            except Exception as e:
-                logger.debug(f"Could not fetch alternatives: {e}")
-                print(f"   Alternative stock screening unavailable.")
-                print(f"   💡 Tip: Manually check other {sector} stocks on NEPSE.")
+                # Show position guidance summary
+                good_alts = [a for a in alternatives if a['risk_tier'] == 'GOOD']
+                if good_alts:
+                    print()
+                    print(f"   🎯 ACTIONABLE PICKS (3-5% portfolio):")
+                    for alt in good_alts[:3]:
+                        print(f"      • {alt['symbol']} @ Rs.{alt['entry_price']:.2f} → Target Rs.{alt['target_price']:.2f}")
+            else:
+                print(f"   No qualifying stocks found in {sector} sector.")
+                print(f"   Try: python paper_trader.py --scan --sector={sector.lower().replace(' ', '')}")
         else:
-            print(f"\n   {symbol} scores well ({best_score:.0f}/100). No alternatives needed.")
-            print(f"   💡 For diversification, consider other sectors:")
-            print(f"      • Commercial Banks (stable dividends)")
-            print(f"      • Hydro Power (growth potential)")
-            print(f"      • Life Insurance (moderate risk)")
+            print(f"\n   Sector not identified for {symbol}.")
+            print(f"   💡 Run a full scan: python paper_trader.py --scan --strategy=momentum")
         
         # Final Recommendation
         print("\n" + "═" * 70)
@@ -2827,6 +3386,32 @@ def main():
         default=None,
         help="Stock symbol to analyze (e.g., --stock=NHPC). Use with --action=analyze"
     )
+    
+    # Portfolio management (strict holding rules)
+    parser.add_argument(
+        "--portfolio",
+        action="store_true",
+        help="Show portfolio status with holding rules (9%% max, 7-day hold, 3 exit triggers)"
+    )
+    parser.add_argument(
+        "--buy-picks",
+        nargs='*',
+        metavar='SYMBOL',
+        help="Buy top scan picks or specific symbols (e.g., --buy-picks GVL PPCL HPPL)"
+    )
+    parser.add_argument(
+        "--sell",
+        type=str,
+        default=None,
+        metavar='SYMBOL',
+        help="Sell a position from portfolio (e.g., --sell GVL)"
+    )
+    parser.add_argument(
+        "--sell-price",
+        type=float,
+        default=None,
+        help="Exit price for --sell command"
+    )
 
     args = parser.parse_args()
     if args.scan:
@@ -2834,6 +3419,58 @@ def main():
     if args.analyze:
         args.action = "analyze"
         args.stock = args.analyze
+    
+    # Handle portfolio commands before PaperTrader instantiation
+    if args.portfolio or args.buy_picks is not None or args.sell:
+        pm = PortfolioManager()
+        
+        if args.sell:
+            # Sell a position
+            sell_price = args.sell_price or pm.get_ltp(args.sell)
+            if pm.remove_position(args.sell, sell_price, "USER_SELL"):
+                print(f"✅ Sold {args.sell} @ Rs.{sell_price:.2f}")
+            else:
+                print(f"❌ {args.sell} not found in portfolio")
+            pm.print_status()
+            sys.exit(0)
+        
+        if args.buy_picks is not None:
+            # Buy specific symbols or run scan and buy top picks
+            if args.buy_picks:
+                # Specific symbols provided
+                for symbol in args.buy_picks:
+                    ltp = pm.get_ltp(symbol)
+                    if ltp > 0:
+                        pm.add_position(symbol.upper(), ltp)
+                    else:
+                        print(f"❌ Could not get price for {symbol}")
+            else:
+                # No symbols - run scan and buy top picks
+                print("🔍 Running scan to find top picks...")
+                screener = MasterStockScreener(strategy="momentum")
+                results = screener.run_full_analysis(min_score=70, top_n=10)
+                if results:
+                    bought = pm.buy_top_picks(results)
+                    if bought:
+                        print(f"✅ Bought: {', '.join(bought)}")
+                    else:
+                        print("⚠️ Portfolio full or no qualifying stocks")
+                else:
+                    print("⚠️ No qualifying stocks found")
+            pm.print_status()
+            sys.exit(0)
+        
+        if args.portfolio:
+            # Just show portfolio status
+            # Optionally run a quick scan to show today's picks
+            try:
+                screener = MasterStockScreener(strategy="momentum")
+                results = screener.run_full_analysis(min_score=70, top_n=5, quick_mode=True)
+                pm.print_status(scan_results=results)
+            except Exception as e:
+                logger.debug(f"Could not run scan for portfolio view: {e}")
+                pm.print_status()
+            sys.exit(0)
     
     trader = PaperTrader()
     

@@ -4,7 +4,7 @@
 
 > **Version:** 2.0 Professional  
 > **Last Updated:** 2026-03-21  
-> **Powered by:** 4-Pillar Quantitative Scoring Algorithm
+> **Powered by:** Core Quantitative Scoring Engine + Layered Risk Intelligence
 
 ---
 
@@ -40,8 +40,8 @@ Before even analyzing a stock, we discard the "trash" to save processing power.
 - **Reject** if Daily Turnover < Rs. 1 Crore (Illiquid stocks trap you)
 - **Reject** if Promoter Holding > 80% (No public float to trade)
 
-#### 2. The 4-Pillar Scoring (The Core Engine)
-For every remaining stock (usually ~150 stocks), we calculate a **Quantitative Score (0-100)** based on 4 independent pillars.
+#### 2. Core Quantitative Scoring (The Core Engine)
+For every remaining stock (usually ~150 stocks), we calculate a **Quantitative Score (0-100)** based on the core pillars, then apply advanced risk/intelligence layers.
 
 **New Feature: Sector Trend Bonus (+10 Points)**
 - Before scoring, we check the **Sector Indices** (Banking, Hydro, Finance, etc.).
@@ -180,7 +180,7 @@ flowchart LR
 
 ---
 
-## 🎯 The 4-Pillar Scoring Algorithm
+## 🎯 Core Quantitative Scoring Algorithm
 
 ### Scoring Weight Distribution
 
@@ -689,7 +689,7 @@ Since historical broker/unlock data is unavailable, we use **forward testing**:
 
 | Action | Command | Description |
 |--------|---------|-------------|
-| **scan** | `--action=scan` | Runs 4-Pillar analysis, finds top 5 stocks, saves to database |
+| **scan** | `--action=scan` | Runs core quantitative analysis, finds top stocks, saves to database |
 | **update** | `--action=update` | Checks if open positions hit target (+10%) or stop (-5%) |
 | **status** | `--action=status` | Returns JSON with open positions and performance stats |
 | **report** | `--action=report` | Generates human-readable performance report |
@@ -744,7 +744,7 @@ python tools/paper_trader.py --action=stealth-scan --max-price=500
 **Key Feature: Works When Market is Closed!**
 - Automatically uses yesterday's price data if market is closed
 - Run it at night to prepare your watchlist for the next day
-- Full 4-Pillar analysis even in offline mode
+- Full core quantitative analysis even in offline mode
 
 **Stealth Stages:**
 | Stage | Broker Score | Tech Score | Meaning |
@@ -788,7 +788,7 @@ python tools/paper_trader.py --action=report
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/analysis/screener` | 4-Pillar screener results |
+| `GET /api/analysis/screener` | Quantitative screener results |
 | `GET /api/analysis/top-picks` | Quick top picks |
 | `GET /api/analysis/unlock-risks` | Stocks to avoid |
 | `GET /api/analysis/technical/{symbol}` | Technical analysis |
@@ -949,10 +949,10 @@ pip install -r requirements.txt
 
 ```bash
 # Quick mode (top 50 stocks, ~1 minute)
-python tools/paper_trader.py --action=scan --quick
+python tools/paper_trader.py --scan --strategy=momentum --quick
 
 # Full mode (all stocks, ~5 minutes)
-python tools/paper_trader.py --action=scan
+python tools/paper_trader.py --scan --strategy=momentum
 ```
 
 ### Start Web API
@@ -960,6 +960,119 @@ python tools/paper_trader.py --action=scan
 ```bash
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+---
+
+## 📊 Portfolio Management System (NEW!)
+
+The `--portfolio` command implements **strict holding rules** to prevent emotional trading and scanner rotation.
+
+### Portfolio Rules
+
+| Rule | Value | Description |
+|------|-------|-------------|
+| **MAX ALLOCATION** | 9% | Maximum 9% of portfolio in swing trades |
+| **MAX POSITIONS** | 3 | Maximum 3 stocks at once (3% each) |
+| **HOLD PERIOD** | 7 days | NO selling during first 7 trading days |
+| **PROFIT TARGET** | +10% | Sell when stock reaches +10% profit |
+| **STOP LOSS** | -5% | Sell when stock reaches -5% loss |
+| **MAX HOLD** | 15 days | Force review/exit after 15 days |
+
+### Portfolio Commands
+
+```bash
+# View portfolio status (LIVE P&L auto-updated!)
+python tools/paper_trader.py --portfolio
+
+# Buy specific stocks (3% each)
+python tools/paper_trader.py --buy-picks GVL PPCL HPPL
+
+# Buy top scan picks automatically
+python tools/paper_trader.py --buy-picks
+
+# Sell a position
+python tools/paper_trader.py --sell GVL --sell-price 580
+```
+
+### Auto-Update Features
+
+The `--portfolio` command **automatically fetches live data** every time you run it:
+
+| Feature | Implementation |
+|---------|----------------|
+| **Live LTP** | Fetched from NEPSE API via `get_price_history_with_open()` |
+| **P&L Calculation** | `(LTP - BuyPrice) / BuyPrice × 100` - automatic |
+| **Up/Down Arrows** | ↑ green for gains, ↓ red for losses |
+| **Trading Days** | Auto-counts weekdays since purchase (excludes Fri/Sat) |
+| **Exit Signals** | Checks +10%, -5%, 15-day triggers every run |
+| **Market Hours** | Works during trading hours (live) AND after close (last close) |
+
+**No manual updates needed - just run the command!**
+
+### Portfolio Output Format (with LIVE updates)
+
+```
+============================================================
+📊 PORTFOLIO STATUS (Auto-Updated) (24-Mar)
+============================================================
+
+SYMBOL   |    BUY ₹ |   DAYS |   P&L% (LIVE) |   LTP ₹ (LIVE) | STATUS
+--------------------------------------------------------------------------------
+GVL      |      526 |    1/7 |       +2.8% ↑ |          548 ↑ | 🟢 HOLD (Day 1/7)
+PPCL     |      429 |    2/7 |       -1.2% ↓ |          424 ↓ | 🟢 HOLD (Day 2/7)
+HPPL     |      522 |    1/7 |       +0.8% ↑ |          526 ↑ | 🟢 HOLD (Day 1/7)
+--------------------------------------------------------------------------------
+TOTAL: 9.0% allocation | +0.8% P&L | Next review: 30-Mar
+
+⚠️ NO SELL SIGNALS (In hold period)
+
+🔄 AUTO-UPDATE INFO
+   ✅ LTP fetched LIVE from NEPSE API
+   ✅ P&L calculated automatically
+   ✅ Exit signals checked every run
+   ✅ Run anytime: Market hours → Live | Closed → Last close
+
+🎯 TODAY'S SCAN RESULTS
+   Top picks: SHEL(95), NGPL(92), API(90)
+   → Portfolio FULL (9%) → Watchlist only
+
+⚠️ EXIT LEVELS
+   GVL: +10% target = Rs.579 | -5% stop = Rs.500
+   PPCL: +10% target = Rs.472 | -5% stop = Rs.408
+   HPPL: +10% target = Rs.574 | -5% stop = Rs.496
+```
+
+### The 7-Day Hold Rule
+
+This rule prevents the **scanner rotation trap** where traders constantly sell positions to chase new picks:
+
+| Day | Status | Action |
+|-----|--------|--------|
+| Day 1-7 | 🟢 HOLD | **NO selling** - ignore scanner changes |
+| Day 8-14 | 🟡 REVIEW | Exit if +10% or -5% triggered |
+| Day 15+ | ⏰ FORCE EXIT | Must sell or justify holding |
+
+### Data Storage
+
+Portfolio data is persisted in `portfolio.json`:
+
+```json
+{
+  "holdings": [
+    {
+      "symbol": "GVL",
+      "buy_price": 526.0,
+      "buy_date": "2026-03-23",
+      "allocation": 0.03
+    }
+  ],
+  "watchlist": ["SHEL", "NGPL"],
+  "total_allocation": 0.09,
+  "last_updated": "2026-03-23 16:50:06"
+}
+```
+
+---
 
 ## 🎛️ Advanced Configuration: Trading Strategies
 
@@ -975,7 +1088,7 @@ The engine supports multiple strategies tailored to different market conditions.
 **Usage Example:**
 ```bash
 # Scan using Momentum strategy on Hydropower sector
-python tools/paper_trader.py --action=scan --quick --strategy=momentum --sector=hydro
+python tools/paper_trader.py --scan --strategy=momentum --sector=hydro
 ```
 
 ### Dynamic Sector Filtering (`--sector`)
@@ -995,7 +1108,7 @@ You can apply any strategy to a specific market sector.
 **Example:**
 ```bash
 # Scan only Finance companies with Momentum Strategy
-python tools/paper_trader.py --action=scan --quick --strategy=momentum --sector=finance
+python tools/paper_trader.py --scan --strategy=momentum --sector=finance
 ```
 
 ### Budget Filter (`--max-price`)
@@ -1004,11 +1117,27 @@ Filter out stocks that exceed your budget. The engine skips expensive stocks bef
 **Example:**
 ```bash
 # Only analyze stocks priced at Rs. 500 or below
-python tools/paper_trader.py --action=scan --quick --max-price=500
+python tools/paper_trader.py --scan --quick --max-price=500
 
 # Combine with sector filter
-python tools/paper_trader.py --action=scan --sector=hydro --max-price=400
+python tools/paper_trader.py --scan --sector=hydro --max-price=400
 ```
+
+---
+
+## 📋 Complete Command Reference
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `--portfolio` | View portfolio with holding rules | `--portfolio` |
+| `--buy-picks` | Buy stocks (specific or from scan) | `--buy-picks GVL PPCL` |
+| `--sell` | Sell a position | `--sell GVL --sell-price 580` |
+| `--scan` | Run daily momentum scan | `--scan --strategy=momentum` |
+| `--analyze` | Deep analysis of single stock | `--analyze NHPC` |
+| `--sector` | Filter by sector | `--sector=hydro` |
+| `--max-price` | Budget filter | `--max-price=500` |
+| `--quick` | Analyze top 50 only | `--scan --quick` |
+| `--full` | Include news + AI analysis | `--scan --full` |
 
 ---
 

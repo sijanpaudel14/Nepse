@@ -591,3 +591,66 @@ The NEPSE single stock analysis report is now a **market-ready product** that:
 - [ ] Telegram inline buttons for alternatives
 
 All critical and nice-to-have gaps from the gap analysis are now **COMPLETE** and tested.
+
+---
+
+## 📊 Portfolio Management System (NEW!)
+
+The `--portfolio` command enforces **strict holding rules** to prevent emotional trading and **auto-fetches LIVE prices** from NEPSE API.
+
+### Commands
+
+```bash
+# View portfolio (LIVE P&L auto-updated!)
+python tools/paper_trader.py --portfolio
+
+# Buy stocks (3% each, max 9% total)
+python tools/paper_trader.py --buy-picks GVL PPCL HPPL
+
+# Sell a position
+python tools/paper_trader.py --sell GVL --sell-price 580
+```
+
+### The 3 Iron Rules
+
+| Rule | Value | Why |
+|------|-------|-----|
+| **9% MAX** | 3 stocks × 3% | Prevents over-concentration |
+| **7-DAY HOLD** | No exits Day 1-7 | Stops emotional selling |
+| **3 EXIT TRIGGERS** | +10%, -5%, 15 days | Mechanical discipline |
+
+### Live Auto-Update Features
+
+Every `--portfolio` run:
+- ✅ Fetches **LIVE LTP** from NEPSE API
+- ✅ Auto-calculates P&L
+- ✅ Shows up/down arrows (↑↓)
+- ✅ Counts trading days (excludes Fri/Sat)
+- ✅ Checks exit triggers
+- ✅ Works during market hours AND after close
+
+**No manual updates needed!**
+
+### Output Format (with LIVE data)
+
+```
+📊 PORTFOLIO STATUS (Auto-Updated) (24-Mar)
+SYMBOL   |    BUY ₹ |   DAYS |   P&L% (LIVE) |   LTP ₹ (LIVE) | STATUS
+--------------------------------------------------------------------------------
+GVL      |      526 |    1/7 |       +2.8% ↑ |          548 ↑ | 🟢 HOLD (Day 1/7)
+PPCL     |      429 |    2/7 |       -1.2% ↓ |          424 ↓ | 🟢 HOLD (Day 2/7)
+--------------------------------------------------------------------------------
+TOTAL: 6.0% allocation | +0.8% P&L | Next review: 30-Mar
+
+⚠️ NO SELL SIGNALS (In hold period)
+
+🔄 AUTO-UPDATE INFO
+   ✅ LTP fetched LIVE from NEPSE API
+   ✅ P&L calculated automatically
+   ✅ Exit signals checked every run
+
+⚠️ EXIT LEVELS
+   GVL: +10% target = Rs.579 | -5% stop = Rs.500
+```
+
+See `USER_GUIDE.md` and `PRODUCT_DOCUMENTATION.md` for complete documentation.

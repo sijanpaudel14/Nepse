@@ -10,7 +10,7 @@
 
 1. [Overview](#overview)
 2. [Data Flow Architecture](#data-flow-architecture)
-3. [The 4-Pillar Scoring Algorithm](#the-4-pillar-scoring-algorithm)
+3. [The Core Quantitative Scoring Algorithm](#the-core-quantitative-scoring-algorithm)
 4. [Data Sources](#data-sources)
 5. [Technical Indicator Calculations](#technical-indicator-calculations)
 6. [Scoring Rules](#scoring-rules)
@@ -28,7 +28,7 @@ This is a **proprietary quantitative stock screening engine** for NEPSE (Nepal S
 
 1. **Fetches ALL 299+ active stocks** from NEPSE official API
 2. **Loops through EVERY stock** and calculates a score
-3. **Applies 4 mathematical pillars** of analysis
+3. **Applies core scoring pillars** of analysis, then layered risk intelligence
 4. **Uses pandas-ta** for real technical indicator calculations
 5. **Returns ranked stocks** based on OUR scoring algorithm
 
@@ -89,7 +89,7 @@ This is a **proprietary quantitative stock screening engine** for NEPSE (Nepal S
 
 ---
 
-## The 4-Pillar Scoring Algorithm
+## The Core Quantitative Scoring Algorithm
 
 ### Overview
 
@@ -343,7 +343,7 @@ else:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/analysis/screener` | GET | 🎯 **MAIN** - 4-Pillar Quantitative Screener |
+| `/api/analysis/screener` | GET | 🎯 **MAIN** - Quantitative Screener |
 | `/api/analysis/rejected-stocks` | GET | Stocks rejected by screener |
 | `/api/analysis/top-picks` | GET | Legacy top picks endpoint |
 
@@ -409,7 +409,7 @@ curl "http://localhost:8000/api/analysis/rejected-stocks"
 {
   "success": true,
   "timestamp": "2026-03-21T18:51:18",
-  "algorithm": "4-Pillar Quantitative Scoring Engine",
+  "algorithm": "Core Quantitative Scoring Engine",
   "count": 5,
   "stocks": [
     {
@@ -470,7 +470,7 @@ curl "http://localhost:8000/api/analysis/rejected-stocks"
 ```
 nepse_ai_trading/
 ├── analysis/
-│   ├── master_screener.py    # 🎯 Main 4-Pillar scoring engine
+│   ├── master_screener.py    # 🎯 Main quantitative scoring engine
 │   ├── indicators.py         # pandas-ta wrapper
 │   └── top_picks.py          # Legacy analyzer
 ├── data/

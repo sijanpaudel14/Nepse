@@ -1,0 +1,28 @@
+{
+  "holdings": [
+    {
+      "symbol": "GVL",
+      "buy_price": 526.0,
+      "buy_date": "2026-03-23",
+      "allocation": 0.03,
+      "quantity": 0
+    },
+    {
+      "symbol": "PPCL",
+      "buy_price": 429.0,
+      "buy_date": "2026-03-23",
+      "allocation": 0.03,
+      "quantity": 0
+    },
+    {
+      "symbol": "HPPL",
+      "buy_price": 522.0,
+      "buy_date": "2026-03-23",
+      "allocation": 0.03,
+      "quantity": 0
+    }
+  ],
+  "watchlist": [],
+  "total_allocation": 0.09,
+  "last_updated": "2026-03-23 16:50:06"
+}

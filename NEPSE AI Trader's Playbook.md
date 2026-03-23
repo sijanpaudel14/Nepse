@@ -103,6 +103,78 @@ Your engine's **VWAP Distribution Risk** is your ultimate shield against this.
 *   **The Logic:** If the engine says `Broker Profit: +18%`, the operators have already hit their target. If you buy now, they will dump tomorrow, and you will be stuck in T+2 jail while the price drops 10%. 
 *   **The Safety:** If the engine says `Broker Profit: +2%`, you are mathematically safe. The operators have barely made any money yet. They *need* to spend the next 3 to 4 days pumping the stock to reach their 15% goal. This gives your shares plenty of time to settle in your Demat account so you can sell right alongside them at the top!
 
+### Cheat Code 3: 🚨 The 9-Detector Manipulation Radar (NEW!)
+
+Your engine now includes an **advanced manipulation detection system** that runs 9 separate algorithms to identify insider operator games. This is the same type of analysis used by institutional traders who follow the "smart money."
+
+**How to see it:** Run `python tools/paper_trader.py --analyze SYMBOL` and look for the **"MANIPULATION RISK ANALYSIS"** section.
+
+**The 9 Detectors:**
+
+| # | Detector | What It Finds | Red Flag |
+|---|----------|---------------|----------|
+| 1 | 🔄 **Circular Trading** | Brokers with balanced buy/sell creating fake volume | >20% circular |
+| 2 | 🧹 **Wash Trading** | Same broker buying AND selling to itself | >70% match |
+| 3 | 📈 **Pump/Dump Phase** | Is the stock in Accumulation, Pump, or Distribution? | Distribution |
+| 4 | 🏦 **Broker Concentration** | Top few brokers controlling the stock (HHI Index) | HHI >2500 |
+| 5 | 📉 **Price-Volume Divergence** | Big volume but price not moving = absorption | Volume >2x, price <2% |
+| 6 | 🕐 **EOD Manipulation** | "Painting the tape" - manipulating close price | Close at 90% of range |
+| 7 | 🔗 **Broker Networks** | Coordinated buying by connected brokers | >3 coordinated |
+| 8 | 🔓 **Lockup Risk** | Promoter shares about to unlock and dump | <30 days |
+| 9 | ❌ **Cross-Trade Detection** | Pre-arranged trades between parties | Unusual patterns |
+
+**Understanding the Output:**
+
+```
+🚨 MANIPULATION RISK ANALYSIS (Insider Operator Detection)
+----------------------------------------------------------------------
+
+   📊 MANIPULATION RISK SCORE: [███░░░░░░░] 33%
+   Severity: MEDIUM
+   Trading Status: ✅ SAFE TO TRADE
+
+   📈 OPERATOR PHASE: ✅ CLEAN
+      No clear pump/dump pattern detected
+
+   📋 KEY METRICS:
+      • Broker Concentration (HHI): 370 ✅ OK
+      • Top 3 Brokers Control: 24%
+      • Circular Trading: 45% 🚨 FAKE VOLUME!
+      • Wash Trading: 🚨 DETECTED
+```
+
+**How the Risk Score Affects Your Trade:**
+
+| Risk Score | Severity | Score Penalty | Your Action |
+|------------|----------|---------------|-------------|
+| ≥70% | 🚨 CRITICAL | -50 points | **DO NOT TRADE** - Paper only |
+| 50-70% | ⚠️ HIGH | -30 points | Avoid or tiny position (1%) |
+| 30-50% | ⚡ MEDIUM | -15 points | Proceed with caution (2%) |
+| <30% | ✅ SAFE | 0 penalty | Normal position sizing (3%) |
+
+**Understanding Operator Phases (CRITICAL KNOWLEDGE):**
+
+1. **ACCUMULATION PHASE** ✅
+   - Operators are quietly buying
+   - Volume is low, price is flat
+   - **Your Action:** This is the BEST time to buy. You're getting in before the pump.
+
+2. **PUMP PHASE** ⚠️
+   - Volume exploding, price surging
+   - News/rumors spreading on social media
+   - **Your Action:** If you're already in, set tight stop. If not, DON'T CHASE.
+
+3. **DISTRIBUTION PHASE** 🚨
+   - Operators selling to retail "bag holders"
+   - Price still high but volume decreasing
+   - **Your Action:** NEVER buy. If holding, EXIT immediately.
+
+4. **CLEAN** ✅
+   - No clear manipulation pattern
+   - **Your Action:** Analyze fundamentals normally.
+
+**Pro Tip:** When the engine says "ACCUMULATION PHASE" + "Manipulation Risk <30%", you've found a potential goldmine. The operators are loading up, and you can ride alongside them.
+
 ***
 
 ## CHAPTER 5: Your AI Trading Engine - Complete Command Reference
@@ -159,33 +231,167 @@ python tools/paper_trader.py --action=analyze --symbol=NHPC --strategy=momentum
 ```
 
 **The Output Gives You:**
-- 4-Pillar Scoring (Broker, Unlock Risk, Fundamentals, Technicals)
+- Core Scoring + Risk Layers (Broker, Unlock Risk, Fundamentals, Technicals, plus manipulation/news overlays)
 - Broker Distribution Risk (Are they about to dump?)
 - Exact Entry/Target/Stop-Loss prices with slippage
 - Long-term vs Short-term recommendation
 - Red flags to watch for
 
-### 📈 PORTFOLIO MANAGEMENT
+### 📈 PORTFOLIO MANAGEMENT (Strict Holding Rules)
+
+The `--portfolio` command enforces **mathematical discipline** to stop you from over-trading.
+
+#### 🎯 THE THREE IRON RULES
+
+| Rule | Description | Why It Matters |
+|------|-------------|----------------|
+| **9% MAX** | 3 stocks × 3% each = 9% portfolio | Prevents over-concentration in swing trades |
+| **7-DAY HOLD** | No exits during first 7 days | Stops emotional selling; lets trades work |
+| **3 EXIT TRIGGERS** | +10% target, -5% stop, 15 days max | Mechanical rules = no emotion |
+
+#### 📊 View Portfolio Status (LIVE Updates!)
 
 ```bash
-# View your current paper trading portfolio
-python tools/paper_trader.py --action=portfolio
+# Quick portfolio check - FETCHES LIVE PRICES automatically!
+python tools/paper_trader.py --portfolio
+```
 
-# Record a buy
-python tools/paper_trader.py --action=buy --symbol=NICA --quantity=100 --price=389
+**What happens when you run this command:**
+1. ✅ Fetches **LIVE LTP** from NEPSE API (during market hours)
+2. ✅ Auto-calculates P&L = (LTP - Buy Price) / Buy Price × 100
+3. ✅ Updates days held since purchase (trading days only)
+4. ✅ Checks exit triggers (+10%, -5%, 15 days)
+5. ✅ Shows up/down arrows (↑↓) for price movements
 
-# Record a sell
-python tools/paper_trader.py --action=sell --symbol=NICA --quantity=100 --price=425
+**Output format:**
+```
+============================================================
+📊 PORTFOLIO STATUS (Auto-Updated) (24-Mar)
+============================================================
 
-# View trade history
-python tools/paper_trader.py --action=history
+SYMBOL   |    BUY ₹ |   DAYS |   P&L% (LIVE) |   LTP ₹ (LIVE) | STATUS
+--------------------------------------------------------------------------------
+GVL      |      526 |    1/7 |       +2.8% ↑ |          548 ↑ | 🟢 HOLD (Day 1/7)
+PPCL     |      429 |    2/7 |       -1.2% ↓ |          424 ↓ | 🟢 HOLD (Day 2/7)
+HPPL     |      522 |    1/7 |       +0.8% ↑ |          526 ↑ | 🟢 HOLD (Day 1/7)
+--------------------------------------------------------------------------------
+TOTAL: 9.0% allocation | +0.8% P&L | Next review: 30-Mar
+
+⚠️ NO SELL SIGNALS (In hold period)
+
+🔄 AUTO-UPDATE INFO
+   ✅ LTP fetched LIVE from NEPSE API
+   ✅ P&L calculated automatically
+   ✅ Exit signals checked every run
+   ✅ Run anytime: Market hours → Live | Closed → Last close
+
+⚠️ EXIT LEVELS
+   GVL: +10% target = Rs.579 | -5% stop = Rs.500
+```
+
+**Market Hours Handling:**
+- **During market (11AM-3PM):** Shows real-time prices ✅
+- **After close / weekends:** Shows last closing prices ✅
+- **Run anytime:** Command ALWAYS works!
+
+**Daily Monitoring Workflow:**
+```bash
+10:00 AM: python tools/paper_trader.py --portfolio  # Morning check
+12:00 PM: python tools/paper_trader.py --portfolio  # Midday update
+3:15 PM:  python tools/paper_trader.py --portfolio  # Close prices
+```
+
+#### 🛒 Buy Stocks (With Automatic Limits)
+
+```bash
+# Buy specific stocks (3% each, auto-blocked if portfolio full)
+python tools/paper_trader.py --buy-picks GVL PPCL HPPL
+
+# Buy top scan picks automatically (runs momentum scan first)
+python tools/paper_trader.py --buy-picks
+```
+
+**What happens when portfolio is full:**
+- New scan results go to **Watchlist only**
+- You see: `→ Portfolio FULL (9%) → Watchlist only`
+- System blocks any new buys until you sell
+
+#### 🔴 Sell Stocks
+
+```bash
+# Sell a position (with exit price)
+python tools/paper_trader.py --sell GVL --sell-price 580
+
+# Sell at current market price
+python tools/paper_trader.py --sell GVL
+```
+
+#### 📋 The 7-Day Hold Rule (No Exceptions!)
+
+This is the **most important rule** to prevent the scanner rotation loop:
+
+| Day | Status | What You Can Do |
+|-----|--------|-----------------|
+| Day 1-7 | 🟢 HOLD | **NOTHING** - ignore all scanner changes |
+| Day 8 | 🟡 REVIEW | Check exit triggers (+10%, -5%) |
+| Day 8-15 | 🟡 ACTIVE | Exit triggers apply |
+| Day 15+ | ⏰ FORCE EXIT | Review/sell regardless of P&L |
+
+**Example:** You buy GVL on Sunday. On Tuesday, the scanner shows SHEL as better.
+- ❌ **WRONG:** Sell GVL, buy SHEL (scanner rotation trap!)
+- ✅ **RIGHT:** Keep GVL until Day 7+, add SHEL to watchlist
+
+#### 🎯 Exit Trigger Details
+
+| Trigger | Action | Calculation |
+|---------|--------|-------------|
+| **+10% Target** | SELL for profit | Buy price × 1.10 |
+| **-5% Stop Loss** | SELL to limit loss | Buy price × 0.95 |
+| **15-Day Max** | REVIEW position | Force decision |
+
+#### 📁 Data Storage
+
+Portfolio data is saved to `portfolio.json`:
+
+```json
+{
+  "holdings": [
+    {
+      "symbol": "GVL",
+      "buy_price": 526.0,
+      "buy_date": "2026-03-23",
+      "allocation": 0.03
+    }
+  ],
+  "watchlist": ["SHEL", "NGPL"],
+  "total_allocation": 0.09
+}
+```
+
+#### 🔄 The Complete Daily Workflow
+
+```bash
+# 1. MORNING (11:00 AM) - Check portfolio status
+python tools/paper_trader.py --portfolio
+
+# 2. MIDDAY (2:30 PM) - Run momentum scan
+python tools/paper_trader.py --scan --strategy=momentum
+
+# 3. IF PORTFOLIO EMPTY - Buy top 3
+python tools/paper_trader.py --buy-picks
+
+# 4. IF PORTFOLIO FULL - Just watch
+# Scan results automatically added to watchlist
+
+# 5. IF DAY 8+ AND EXIT SIGNAL - Sell
+python tools/paper_trader.py --sell GVL --sell-price 580
 ```
 
 ***
 
-## CHAPTER 6: The 4-Pillar Scoring System Explained
+## CHAPTER 6: The Core Scoring System Explained
 
-Your engine scores every stock on 4 pillars. Understanding these numbers is the difference between gambling and investing.
+Your engine scores every stock on core pillars, then applies risk/intelligence layers. Understanding these numbers is the difference between gambling and investing.
 
 ### 📊 PILLAR 1: Broker/Institutional Score (Max 30 points)
 
@@ -589,4 +795,3 @@ That's still 4x your money using disciplined algorithmic trading.
 Your AI engine removes emotion from stock selection. Now you must remove emotion from execution.
 
 **Happy Trading. May the algorithms be ever in your favor.** 🚀
-

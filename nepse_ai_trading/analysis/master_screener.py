@@ -54,6 +54,14 @@ except ImportError:
     AI_AVAILABLE = False
     logger.info("🤖 AI Advisor not available (OpenAI not installed)")
 
+# Manipulation Detector (optional - for operator intelligence)
+try:
+    from intelligence.manipulation_detector import ManipulationDetector, ManipulationReport
+    MANIPULATION_DETECTOR_AVAILABLE = True
+except ImportError:
+    MANIPULATION_DETECTOR_AVAILABLE = False
+    logger.info("🚨 Manipulation detector not available")
+
 
 @dataclass
 class ScoringBreakdown:
@@ -168,6 +176,20 @@ class ScreenedStock:
     ai_confidence: float = 0.0     # 1-10
     ai_summary: str = ""           # 3-sentence AI explanation
     ai_risks: str = ""             # Key risks identified by AI
+    
+    # MANIPULATION DETECTION (Pillar 6 - Operator Intelligence)
+    manipulation_risk_score: float = 0.0      # 0-100 (0=clean, 100=extreme)
+    manipulation_severity: str = ""           # NONE, LOW, MEDIUM, HIGH, CRITICAL
+    operator_phase: str = ""                  # ACCUMULATION, PUMP, DISTRIBUTION, CLEAN
+    operator_phase_description: str = ""      # Human-readable phase explanation
+    manipulation_alerts: List[str] = field(default_factory=list)
+    manipulation_veto_reasons: List[str] = field(default_factory=list)
+    broker_concentration_hhi: float = 0.0     # HHI index (>2500 = monopoly)
+    top3_broker_control_pct: float = 0.0      # % controlled by top 3 brokers
+    circular_trading_pct: float = 0.0         # % volume that's circular
+    wash_trading_detected: bool = False       # Wash trading found
+    lockup_days_remaining: Optional[int] = None  # Days until promoter unlock
+    is_safe_to_trade: bool = True             # Final manipulation verdict
     
     # Detailed breakdown
     breakdown: ScoringBreakdown = field(default_factory=ScoringBreakdown)
@@ -2250,6 +2272,62 @@ class MasterStockScreener:
         
         # 4. Calculate Final Score (including risk penalties)
         result.total_score = base_score + result.market_regime_penalty + risk_penalty
+        
+        # ========== 🚨 MANIPULATION DETECTION (Pillar 6) ==========
+        # Run advanced operator manipulation detection
+        manipulation_penalty = 0.0
+        if MANIPULATION_DETECTOR_AVAILABLE:
+            try:
+                detector = ManipulationDetector()
+                manip_report = detector.analyze_stock(symbol)
+                
+                # Store manipulation data in result
+                result.manipulation_risk_score = manip_report.overall_risk_score
+                result.manipulation_severity = manip_report.overall_severity.value
+                result.operator_phase = manip_report.operator_phase
+                result.operator_phase_description = manip_report.operator_phase_description
+                result.manipulation_alerts = manip_report.alerts
+                result.manipulation_veto_reasons = manip_report.veto_reasons
+                result.is_safe_to_trade = manip_report.is_safe_to_trade
+                
+                # Store detailed metrics
+                result.broker_concentration_hhi = manip_report.broker_concentration.hhi_index
+                result.top3_broker_control_pct = manip_report.broker_concentration.top3_concentration
+                result.circular_trading_pct = manip_report.circular_trading.circular_percentage
+                result.wash_trading_detected = manip_report.wash_trading.detected
+                result.lockup_days_remaining = manip_report.lockup_risk.days_until_unlock
+                
+                # Apply manipulation penalty based on severity
+                # -50 for CRITICAL, -30 for HIGH, -15 for MEDIUM, 0 for LOW/NONE
+                if manip_report.overall_severity.value == "CRITICAL":
+                    manipulation_penalty = -50.0
+                    result.breakdown.penalties.append(
+                        f"🚨 CRITICAL MANIPULATION: Score -{abs(manipulation_penalty):.0f} | {', '.join(manip_report.veto_reasons[:2])}"
+                    )
+                elif manip_report.overall_severity.value == "HIGH":
+                    manipulation_penalty = -30.0
+                    result.breakdown.penalties.append(
+                        f"⚠️ HIGH MANIPULATION RISK: Score -{abs(manipulation_penalty):.0f} | {', '.join(manip_report.veto_reasons[:2])}"
+                    )
+                elif manip_report.overall_severity.value == "MEDIUM":
+                    manipulation_penalty = -15.0
+                    result.breakdown.penalties.append(
+                        f"⚡ MEDIUM MANIPULATION RISK: Score -{abs(manipulation_penalty):.0f}"
+                    )
+                
+                # Add operator phase to bonuses/penalties
+                if manip_report.pump_dump.phase.value == "ACCUMULATION":
+                    result.breakdown.bonuses.append(f"✅ ACCUMULATION PHASE: Operators buying (Early entry opportunity)")
+                elif manip_report.pump_dump.phase.value == "DISTRIBUTION":
+                    result.breakdown.penalties.append(f"🚨 DISTRIBUTION PHASE: Operators exiting - AVOID")
+                elif manip_report.pump_dump.phase.value == "PUMP":
+                    result.breakdown.penalties.append(f"⚠️ PUMP PHASE: Late entry risk")
+                    
+            except Exception as e:
+                logger.warning(f"Manipulation detection error for {symbol}: {e}")
+        
+        # Apply manipulation penalty to total score
+        result.total_score += manipulation_penalty
         
         # ========== 🚨 MOMENTUM SCORE CAP FOR INTRADAY DISTRIBUTION ==========
         # If intraday dump detected (Sunday Dump pattern), cap the momentum score

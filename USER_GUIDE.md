@@ -11,36 +11,49 @@
 ```bash
 # 🔄 DAILY WORKFLOW (Copy-Paste Ready)
 
-# Step 1: Update positions (10:00 AM)
-python tools/paper_trader.py --action=update
+# Step 1: Check portfolio status (10:00 AM)
+python tools/paper_trader.py --portfolio
 
-# Step 2: Check status (any time)
-python tools/paper_trader.py --action=status
+# Step 2: Run daily scan (2:30 PM)
+python tools/paper_trader.py --scan --strategy=momentum
 
-# Step 3: Run daily scan (3:15 PM)
-python tools/paper_trader.py --action=scan --quick
+# Step 3: Buy top picks (if portfolio empty)
+python tools/paper_trader.py --buy-picks
 
-# Step 4: Weekly report (Friday)
-python tools/paper_trader.py --action=report
+# Step 4: Sell when exit signal appears (Day 8+)
+python tools/paper_trader.py --sell SYMBOL --sell-price 580
 ```
 
 | Action | What It Does | When to Run |
 |--------|--------------|-------------|
-| `scan` | Find top 5 stocks to buy | Daily 3:15 PM |
-| `update` | Check if targets/stops hit | Daily 10:00 AM |
-| `status` | View open positions | Any time |
-| `report` | Win/loss statistics | Weekly |
-| `analyze` | Deep analysis of a single stock | When friend recommends |
+| `--portfolio` | View holdings with P&L, days held, exit levels | Daily 10:00 AM |
+| `--scan` | Find top 5 stocks to buy | Daily 2:30 PM |
+| `--buy-picks` | Buy top scan picks or specific stocks | When portfolio empty |
+| `--sell` | Exit a position | When exit signal appears |
+| `--analyze` | Deep analysis of a single stock | When friend recommends |
 | `stealth-scan` | Detect smart money sector rotation | Any time (works offline!) |
 
 | Flag | Purpose | Example |
 |------|---------|---------|
-| `--quick` | Analyze top 50 stocks only (faster) | `--action=scan --quick` |
-| `--full` | Add news + AI analysis | `--action=scan --quick --full` |
+| `--portfolio` | View portfolio with holding rules | `python paper_trader.py --portfolio` |
+| `--buy-picks GVL PPCL` | Buy specific stocks | `--buy-picks GVL PPCL HPPL` |
+| `--quick` | Analyze top 50 stocks only (faster) | `--scan --quick` |
+| `--full` | Add news + AI analysis | `--scan --quick --full` |
 | `--strategy=momentum` | Trend-following mode | `--strategy=momentum --sector=hydro` |
 | `--sector=bank` | Filter by sector | `--sector=finance` |
 | `--max-price=500` | Budget filter | `--max-price=400` |
-| `--stock=NHPC` | Analyze specific stock | `--action=analyze --stock=NHPC` |
+| `--analyze NHPC` | Analyze specific stock | `--analyze NHPC` |
+
+### 📊 Portfolio Rules (MEMORIZE THESE!)
+
+| Rule | Value | Meaning |
+|------|-------|---------|
+| **MAX ALLOCATION** | 9% | Only 9% of portfolio in swing trades |
+| **MAX STOCKS** | 3 | Maximum 3 positions at once |
+| **HOLD PERIOD** | 7 days | NO selling during first 7 days |
+| **PROFIT TARGET** | +10% | Sell when +10% profit |
+| **STOP LOSS** | -5% | Sell when -5% loss |
+| **MAX HOLD** | 15 days | Force review after 15 days |
 
 ---
 
@@ -69,7 +82,8 @@ This is a **proprietary AI-powered stock screening engine** specifically designe
 
 | Feature | Description |
 |---------|-------------|
-| 🔍 **4-Pillar Analysis** | Broker, Unlock Risk, Fundamentals, Technical |
+| 🔍 **6-Pillar Analysis** | Broker, Unlock Risk, Fundamentals, Technical, News/AI, Manipulation |
+| 🚨 **Manipulation Detection** | 9 detectors for insider operator games |
 | 📊 **Real Technical Indicators** | EMA, RSI, MACD, ADX using pandas-ta |
 | 🛡️ **Risk Protection** | Slippage modeling, T+2 warnings, unlock alerts |
 | 📈 **Paper Trading** | Forward-test the algorithm with virtual portfolio |
@@ -181,7 +195,7 @@ flowchart LR
     C3 --> D1 --> D2 --> D3
 ```
 
-### 4-Pillar Scoring Breakdown
+### Core Scoring Breakdown (4 Pillars + Layered Intelligence)
 
 ```mermaid
 pie title "Score Weight Distribution (100 pts total)"
@@ -193,7 +207,7 @@ pie title "Score Weight Distribution (100 pts total)"
 
 ### 📰🤖 Optional 5th Layer: News & AI Intelligence
 
-After the 4-Pillar scoring, you can optionally enable:
+After the core 4-pillar scoring, you can optionally enable:
 
 ```mermaid
 flowchart LR
@@ -206,7 +220,7 @@ flowchart LR
         A2["Human-Readable<br/>Verdict"]
     end
     
-    TopPicks["Top 5 Stocks<br/>from 4-Pillar Engine"] --> N1
+    TopPicks["Top 5 Stocks<br/>from Core Quant Engine"] --> N1
     N1 --> N2 --> N4
     N1 --> N3 --> N4
     N4 --> A1 --> A2
@@ -214,7 +228,7 @@ flowchart LR
 ```
 
 **How it works:**
-1. Takes top stocks from 4-Pillar engine
+1. Takes top stocks from the core scoring engine
 2. Opens headless Chrome browser via Playwright
 3. Scrapes recent news from ShareSansar & Merolagani
 4. Analyzes sentiment (bullish/bearish keywords)
@@ -227,6 +241,76 @@ pip install playwright openai
 playwright install chromium
 # Set OPENAI_API_KEY in .env file
 ```
+
+### 🚨 6th Layer: Manipulation Detection (Insider Intelligence)
+
+The system includes a **9-detector manipulation detection engine** that identifies operator games and insider manipulation patterns:
+
+```mermaid
+flowchart TD
+    subgraph "Layer 6: Manipulation Detection"
+        D1["🔄 Circular Trading<br/>Fake volume detection"]
+        D2["🧹 Wash Trading<br/>Same broker buy/sell"]
+        D3["📈 Pump/Dump Phase<br/>Accumulation→Pump→Distribution"]
+        D4["🏦 Broker Concentration<br/>HHI Index"]
+        D5["📉 Price-Volume Divergence"]
+        D6["🕐 EOD Manipulation<br/>Painting the tape"]
+        D7["🔗 Broker Networks<br/>Coordinated groups"]
+        D8["🔓 Lockup Risk<br/>Promoter selling risk"]
+    end
+    
+    Stock["Stock Data"] --> D1 & D2 & D3 & D4 & D5 & D6 & D7 & D8
+    D1 & D2 & D3 & D4 & D5 & D6 & D7 & D8 --> Score["Manipulation Risk<br/>0-100%"]
+    Score --> |">70%"| Critical["🚨 CRITICAL<br/>-50 penalty"]
+    Score --> |"50-70%"| High["⚠️ HIGH<br/>-30 penalty"]
+    Score --> |"30-50%"| Medium["⚡ MEDIUM<br/>-15 penalty"]
+    Score --> |"<30%"| Safe["✅ SAFE<br/>No penalty"]
+```
+
+**What Each Detector Finds:**
+
+| Detector | What It Detects | Red Flag Threshold |
+|----------|-----------------|-------------------|
+| 🔄 Circular Trading | Brokers with balanced buy/sell (fake volume) | >20% circular volume |
+| 🧹 Wash Trading | Same broker buying & selling to itself | >70% buy/sell match |
+| 📈 Pump/Dump Phase | Current phase: Accumulation, Pump, or Distribution | Distribution phase |
+| 🏦 Broker Concentration | Top brokers controlling too much | HHI >2500 |
+| 📉 Price-Volume Divergence | High volume but price not moving (absorption) | Volume >2x, price <2% |
+| 🕐 EOD Manipulation | "Painting the tape" at close | Close at 90%+ range |
+| 🔗 Broker Networks | Coordinated buying by connected brokers | >3 brokers coordinated |
+| 🔓 Lockup Risk | Promoter shares about to unlock | <30 days to unlock |
+
+**Example Output:**
+```
+🚨 MANIPULATION RISK ANALYSIS (Insider Operator Detection)
+----------------------------------------------------------------------
+
+   📊 MANIPULATION RISK SCORE: [███░░░░░░░] 33%
+   Severity: MEDIUM
+   Trading Status: ✅ SAFE TO TRADE
+
+   📈 OPERATOR PHASE: ✅ CLEAN
+      No clear pump/dump pattern detected
+
+   📋 KEY METRICS:
+      • Broker Concentration (HHI): 370 ✅ OK
+      • Top 3 Brokers Control: 24%
+      • Circular Trading: 45% 🚨 FAKE VOLUME!
+      • Wash Trading: 🚨 DETECTED
+
+   🚨 DETECTED PATTERNS:
+      🔴 Circular Trading: 45%
+      🔴 Wash Trading: 18 brokers
+
+   💡 What this means:
+      No clear manipulation pattern. Analyze fundamentals normally.
+```
+
+**Understanding Operator Phases:**
+- **ACCUMULATION**: Operators silently buying - early entry opportunity
+- **PUMP**: Volume spike + price surge - late entry risk, don't chase
+- **DISTRIBUTION**: Operators exiting while retail buys - AVOID new positions
+- **CLEAN**: No clear manipulation pattern
 
 ### Decision Tree for Stock Selection
 
@@ -306,97 +390,150 @@ This section explains **exactly what to do every trading day** to use the NEPSE 
 
 | Time | Action | Command | Why |
 |------|--------|---------|-----|
-| **9:00 AM** | Market Opens | - | Wait for initial volatility to settle |
-| **11:00 AM** | Check Market Regime | `--action=status` | See if NEPSE is in Bull/Bear mode |
-| **3:00 PM** | Market Closes | - | Wait 15 minutes for final prices |
-| **3:15 PM** | Run Daily Scan | `--action=scan --quick` | Get today's top picks |
-| **3:20 PM** | Review & Decide | - | Manually review AI recommendations |
-| **3:30 PM** | Place Orders (Optional) | Log into TMS | Buy recommended stocks |
-| **Next Day 10:00 AM** | Update Positions | `--action=update` | Check if targets/stops were hit |
+| **10:00 AM** | Check Portfolio | `--portfolio` | See holdings, P&L, days held |
+| **2:30 PM** | Run Daily Scan | `--scan --strategy=momentum` | Get today's top picks |
+| **2:45 PM** | Review & Decide | - | Check if portfolio has slots |
+| **2:55 PM** | Buy (if empty) | `--buy-picks` | Buy top 3 picks |
+| **Day 8+** | Check Exit Signals | `--portfolio` | Sell if +10% or -5% |
 
 ---
 
 ### 🔄 Step-by-Step Daily Workflow
 
-#### **Step 1: Update Your Existing Positions (10:00 AM)**
-Before doing anything else, check if any of your open positions hit their Target or Stop Loss.
+#### **Step 1: Check Portfolio Status (10:00 AM)**
+Before doing anything else, check your current holdings and exit signals.
 
 ```bash
-python tools/paper_trader.py --action=update
+python tools/paper_trader.py --portfolio
+```
+
+**What this command does (AUTOMATICALLY):**
+1. ✅ Fetches **LIVE LTP** from NEPSE API
+2. ✅ Calculates P&L = (LTP - Buy Price) / Buy Price × 100
+3. ✅ Counts trading days held (excludes Fri/Sat)
+4. ✅ Checks exit triggers (+10%, -5%, 15 days)
+5. ✅ Shows up/down arrows (↑↓) for movements
+
+**Output Example (with LIVE updates):**
+```
+============================================================
+📊 PORTFOLIO STATUS (Auto-Updated) (24-Mar)
+============================================================
+
+SYMBOL   |    BUY ₹ |   DAYS |   P&L% (LIVE) |   LTP ₹ (LIVE) | STATUS
+--------------------------------------------------------------------------------
+GVL      |      526 |    3/7 |       +2.1% ↑ |          537 ↑ | 🟢 HOLD (Day 3/7)
+PPCL     |      429 |    3/7 |       -0.5% ↓ |          427 ↓ | 🟢 HOLD (Day 3/7)
+HPPL     |      522 |    3/7 |       +1.3% ↑ |          529 ↑ | 🟢 HOLD (Day 3/7)
+--------------------------------------------------------------------------------
+TOTAL: 9.0% allocation | +1.0% P&L | Next review: 30-Mar
+
+⚠️ NO SELL SIGNALS (In hold period)
+
+🔄 AUTO-UPDATE INFO
+   ✅ LTP fetched LIVE from NEPSE API
+   ✅ P&L calculated automatically
+   ✅ Exit signals checked every run
+   ✅ Run anytime: Market hours → Live | Closed → Last close
+
+⚠️ EXIT LEVELS
+   GVL: +10% target = Rs.579 | -5% stop = Rs.500
+   PPCL: +10% target = Rs.472 | -5% stop = Rs.408
+   HPPL: +10% target = Rs.574 | -5% stop = Rs.496
+```
+
+**What to look for:**
+- 🟢 **HOLD** = Stay in position (within 7-day hold period)
+- 🎯 **SELL TARGET** = +10% hit, take profit!
+- 🛑 **SELL STOP** = -5% hit, cut loss!
+- ⏰ **REVIEW** = 15+ days, make a decision
+- ↑ **Green arrows** = Price/P&L increasing
+- ↓ **Red arrows** = Price/P&L decreasing
+
+**Market Hours Handling:**
+- **Market open (11AM-3PM):** Shows real-time prices
+- **Market closed / weekends:** Shows last close
+- **Run anytime:** Command ALWAYS works!
+
+**Recommended check times:**
+```bash
+10:00 AM: --portfolio  # Morning overview
+12:00 PM: --portfolio  # Midday live update
+3:15 PM:  --portfolio  # Final close prices
+```
+
+#### **Step 2: Run the Daily Scan (2:30 PM)**
+After market settles, run the momentum scanner to find opportunities.
+
+```bash
+# Momentum scan (recommended for swing trading)
+python tools/paper_trader.py --scan --strategy=momentum
+
+# Sector-specific scan
+python tools/paper_trader.py --scan --strategy=momentum --sector=hydro
+
+# With news and AI analysis
+python tools/paper_trader.py --scan --strategy=momentum --full
 ```
 
 **What this does:**
-- Fetches current prices for all your open positions
-- Checks if any stock hit the +10% Target → marks as `TARGET_HIT`
-- Checks if any stock hit the -5% Stop Loss → marks as `STOPPED_OUT`
-- Automatically closes positions that expired (held > 10 days)
+- Scores all stocks using the core quantitative scoring engine
+- Classifies into GOOD / RISKY / VETO tiers
+- Shows position sizing guidance (3-5% / 1-2% / paper-only)
 
-#### **Step 2: Check Your Portfolio Status (Any Time)**
-See what positions you currently hold and their status.
+#### **Step 3: Buy Top Picks (If Portfolio Has Space)**
 
 ```bash
-python tools/paper_trader.py --action=status
+# Buy specific stocks (3% each)
+python tools/paper_trader.py --buy-picks GVL PPCL HPPL
+
+# OR let the system pick from scan results
+python tools/paper_trader.py --buy-picks
 ```
 
-**Output Example:**
-```json
-{
-  "open_positions": 3,
-  "open_trades": [
-    {"symbol": "NICA", "entry": 365.0, "target": 401.5, "days_held": 2},
-    {"symbol": "ADBL", "entry": 322.5, "target": 354.75, "days_held": 1}
-  ],
-  "performance": {
-    "win_rate": 65.0,
-    "avg_win_pct": 8.5
-  }
-}
-```
+**Important:**
+- If portfolio is **FULL** (9%), new picks go to watchlist
+- Max 3 stocks at a time
+- 3% allocation per stock
 
-#### **Step 3: Run the Daily Scan (3:15 PM)**
-After market close, run the scanner to find tomorrow's buying opportunities.
+#### **Step 4: Sell When Exit Signal Appears (Day 8+)**
 
 ```bash
-# Quick scan (recommended for daily use)
-python tools/paper_trader.py --action=scan --quick
+# Sell with specific exit price
+python tools/paper_trader.py --sell GVL --sell-price 580
 
-# Full scan with news + AI analysis
-python tools/paper_trader.py --action=scan --quick --full
+# Sell at current LTP
+python tools/paper_trader.py --sell GVL
 ```
 
-**What this does:**
-- Fetches live prices for 299 NEPSE stocks
-- Applies the 4-Pillar scoring algorithm
-- Filters by liquidity (>Rs. 1 Crore turnover)
-- Returns top 5 stocks with entry price, target, and stop loss
-- Saves picks to database for tracking
+**Exit Rules:**
+| Condition | Action |
+|-----------|--------|
+| +10% profit | SELL (take profit) |
+| -5% loss | SELL (cut loss) |
+| Day 15+ | SELL or REVIEW |
 
-#### **Step 4: Review the Weekly Report (Every Friday)**
-Check your overall trading performance.
+---
 
-```bash
-python tools/paper_trader.py --action=report
-```
+### 📊 The 7-Day Hold Rule (CRITICAL!)
 
-**Output Example:**
-```
-======================================================================
-📊 PAPER TRADING PERFORMANCE REPORT
-======================================================================
-📈 OVERALL STATISTICS:
-├── Total Closed Trades: 47
-├── Winning Trades: 31 (66.0%)
-├── Losing Trades: 16
-├── Avg Win: +8.75%
-├── Avg Loss: -4.20%
-└── Overall Avg Return: +3.42%
+This rule prevents the **scanner rotation trap**:
 
-💡 ALGORITHM VALIDATION:
-   Win Rate Target: > 55%
-   Current Win Rate: 66.0%
-   Status: ✅ PROFITABLE
-======================================================================
-```
+| Day | What You See | What You Do |
+|-----|--------------|-------------|
+| Day 1 | Bought GVL, PPCL, HPPL | Wait |
+| Day 2 | Scanner shows SHEL better | **IGNORE** - still in hold period |
+| Day 3 | GVL drops -2% | **HOLD** - not at -5% stop yet |
+| Day 5 | Scanner shows new picks | **IGNORE** - portfolio full anyway |
+| Day 7 | Review day | Check if +10% or -5% hit |
+| Day 8 | GVL at +8% | Hold for +10% target |
+| Day 10 | GVL hits +10% | **SELL GVL** ✅ |
+| Day 11 | 1 slot open | Run scan, buy new pick |
+
+**Why this matters:**
+- Stops you from selling winners too early
+- Stops you from chasing new picks daily
+- Forces mechanical discipline
 
 ---
 
@@ -404,7 +541,10 @@ python tools/paper_trader.py --action=report
 
 | Action | Command | When to Use | What It Does |
 |--------|---------|-------------|--------------|
-| **scan** | `--action=scan` | Daily at 3:15 PM | Finds top 5 stocks, saves as "RECOMMENDED" |
+| **portfolio** | `--portfolio` | Daily at 10:00 AM | Shows holdings with P&L and exit signals |
+| **scan** | `--scan --strategy=momentum` | Daily at 2:30 PM | Finds top stocks, classifies by risk |
+| **buy-picks** | `--buy-picks GVL PPCL` | When portfolio empty | Buys stocks at 3% each |
+| **sell** | `--sell GVL` | When exit signal | Removes position from portfolio |
 | **buy** | `--action=buy --symbol=NICA --price=368` | After buying on TMS | Confirms purchase, changes to "BOUGHT" |
 | **skip** | `--action=skip --symbol=ADBL` | If you decided not to buy | Marks recommendation as "SKIPPED" |
 | **pending** | `--action=pending` | Any time | Lists all pending recommendations |
@@ -571,7 +711,7 @@ Here are all the commands available:
 
 ### 🌟 Mode 1: The "Daily Driver" (Standard)
 **Run this every day at 3:15 PM.**
-This runs the full 4-Pillar analysis on all 299 stocks, scrapes the latest news, and uses AI to give you the final verdict.
+This runs the full core analysis on all 299 stocks, adds news intelligence, and uses AI to give you the final verdict.
 
 ```bash
 # Full 299-Stock Scan + News + AI (Recommended)
@@ -673,7 +813,7 @@ python tools/paper_trader.py --action=analyze --stock=ADBL --full --visible
 
 **What you get:**
 - ✅ Score from BOTH Value AND Momentum strategies
-- ✅ 4-Pillar breakdown for each strategy
+- ✅ Full scoring breakdown for each strategy (core pillars + risk layers)
 - ✅ Fundamental data (PE, EPS, ROE, Book Value)
 - ✅ Dividend history (last 3 years)
 - ✅ Distribution Risk (is operator going to dump?)
@@ -747,7 +887,7 @@ python tools/paper_trader.py --action=stealth-scan --max-price=500
 
 The Stealth Radar has a **smart fallback mechanism**. If you run it at night when the market is closed:
 - It automatically uses **yesterday's price data** from the database
-- Still performs full 4-Pillar analysis
+- Still performs full core analysis
 - You can research and prepare your watchlist before market opens!
 
 **Example Output:**
@@ -822,7 +962,7 @@ Once you have "bought" stocks (virtually or in real TMS), use these commands to 
 #### `--action=scan` - Find New Opportunities
 **When:** Daily at 3:15 PM (after market close)
 
-Runs the complete 4-Pillar analysis and returns the top 5 stocks.
+Runs the complete core analysis and returns the top 5 stocks.
 
 ```bash
 # Basic scan
@@ -909,7 +1049,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/analysis/screener` | 🎯 **Main Endpoint** - 4-Pillar screener results |
+| `GET /api/analysis/screener` | 🎯 **Main Endpoint** - Quantitative screener results |
 | `GET /api/analysis/top-picks` | Quick top picks with scoring |
 | `GET /api/analysis/unlock-risks` | Stocks with upcoming unlocks |
 | `GET /api/analysis/player-favorites` | Buyer/seller dominance |
@@ -943,7 +1083,7 @@ from analysis.master_screener import MasterStockScreener
 
 screener = MasterStockScreener()
 
-# Step 1: Run 4-Pillar quantitative analysis
+# Step 1: Run core quantitative analysis
 results = screener.run_full_analysis(min_score=80, top_n=5, quick_mode=True)
 
 # Step 2: Enrich top picks with NEWS SCRAPING + AI VERDICT
