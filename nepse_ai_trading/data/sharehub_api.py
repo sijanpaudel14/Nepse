@@ -1526,7 +1526,11 @@ class ShareHubAPI:
         if not data.get("success"):
             return []
 
-        return data.get("data", [])
+        # API returns paginated response: {"data": {"content": [...], ...}}
+        page_data = data.get("data", {})
+        if isinstance(page_data, dict):
+            return page_data.get("content", [])
+        return page_data if isinstance(page_data, list) else []
 
     def get_player_favorites(self) -> List[Dict]:
         """

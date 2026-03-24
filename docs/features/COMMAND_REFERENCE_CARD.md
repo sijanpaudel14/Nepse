@@ -1,6 +1,6 @@
 # 🚀 NEPSE Intelligence Commands - Quick Reference Card
 
-## 📋 9 Advanced Commands (Copy & Paste Ready)
+## 📋 10 Advanced Commands (Copy & Paste Ready)
 
 ```bash
 # ========== MARKET OVERVIEW ==========
@@ -26,22 +26,25 @@ python nepse_ai_trading/tools/paper_trader.py --smart-money --sector=hydro
 # 6. Bulk Deal Tracker
 python nepse_ai_trading/tools/paper_trader.py --bulk-deals
 
+# 7. Broker Intelligence (Operator Detection) 🆕
+python nepse_ai_trading/tools/paper_trader.py --broker-intelligence
+
 
 # ========== SINGLE STOCK ANALYSIS ==========
 
-# 7. Technical Composite Score
+# 8. Technical Composite Score
 python nepse_ai_trading/tools/paper_trader.py --tech-score NGPL
 
-# 8. Order Flow Analysis
+# 9. Order Flow Analysis
 python nepse_ai_trading/tools/paper_trader.py --order-flow NABIL
 
-# 9. Dividend Forecast
+# 10. Dividend Forecast
 python nepse_ai_trading/tools/paper_trader.py --dividend-forecast NABIL
 
 
 # ========== PORTFOLIO ==========
 
-# 10. Optimize Portfolio
+# 11. Optimize Portfolio
 python nepse_ai_trading/tools/paper_trader.py --optimize-portfolio GVL PPCL NABIL
 
 
@@ -56,6 +59,52 @@ python nepse_ai_trading/tools/paper_trader.py --analyze NGPL
 # Portfolio Status
 python nepse_ai_trading/tools/paper_trader.py --portfolio
 ```
+
+---
+
+## 🆕 NEW: Broker Intelligence (Operator Detection)
+
+The `--broker-intelligence` command is a powerful operator detection system:
+
+### Usage:
+```bash
+# All sectors (high concentration stocks only)
+python nepse_ai_trading/tools/paper_trader.py --broker-intelligence
+
+# Sector-specific (scans ALL stocks in that sector)
+python nepse_ai_trading/tools/paper_trader.py --broker-intelligence --sector=hydro
+python nepse_ai_trading/tools/paper_trader.py --broker-intelligence --sector=bank
+python nepse_ai_trading/tools/paper_trader.py --broker-intelligence --sector=finance
+python nepse_ai_trading/tools/paper_trader.py --broker-intelligence --sector=microfinance
+```
+
+### What It Shows:
+1. **Aggressive Holdings Score (0-100)** - Early pump warning
+2. **Favourite Broker ⭐** - Sustained conviction (not one-day pump)
+3. **Stockwise Broker Table** - Who controls what
+
+### Output Example:
+```
+🚀 TOP HYDRO PICKS (Pump Early Warning)
+----------------------------------------------------------------------
+#   Symbol     Score    Top3%    Signal       Risk
+----------------------------------------------------------------------
+1   API        53       11.3%    ACCUMULATING 🟢 LOW ⭐
+2   GVL        48       21.3%    ACCUMULATING 🟢 LOW ⭐
+
+📋 STOCKWISE BROKER TABLE (Who Controls What)
+----------------------------------------------------------------------
+Stock    Broker                    Net Amt      Risk     Flag
+----------------------------------------------------------------------
+API      Br42 (Sani Securities...) +3.0Cr       LOW      🟢
+         Br66 (Miyo Securities...) +2.3Cr       LOW      🟢⭐
+```
+
+### How to Use:
+- **Score 80-100:** Strong accumulation → 3% position
+- **Score 60-79:** Moderate → Watchlist (1%)
+- **Score < 60:** Monitor only
+- **⭐ = Favourite Broker:** Repeat buyer = high conviction (NOT a one-day trap)
 
 ---
 
@@ -140,6 +189,7 @@ python nepse_ai_trading/tools/paper_trader.py --dividend-forecast SBI
 | `--sector-rotation` | Money flow direction | Before scan - Where to focus |
 | `--smart-money` | Institutional buying | Confirmation - Are pros buying? |
 | `--bulk-deals` | Large trades | Weekly - Insider activity |
+| `--broker-intelligence` | Operator detection | Before buying - Who controls this stock? |
 | `--tech-score` | Multi-timeframe score | Before buying - Technical strength |
 | `--order-flow` | Buy/sell pressure | Before buying - Current momentum |
 | `--dividend-forecast` | Future dividend | Long-term holds - Income strategy |
@@ -154,6 +204,7 @@ python nepse_ai_trading/tools/paper_trader.py --dividend-forecast SBI
 ✅ Positioning: 60%+ above 50 SMA
 ✅ Sector Rotation: Sector is LEADING
 ✅ Smart Money: Institutional accumulation
+✅ Broker Intelligence: ⭐ Favourite Broker + Score > 60
 ✅ Tech Score: 80+ with all timeframes aligned
 ✅ Order Flow: Delta positive (buyers control)
 ```
@@ -163,6 +214,7 @@ python nepse_ai_trading/tools/paper_trader.py --dividend-forecast SBI
 🚨 Positioning: <30% above 50 SMA
 🚨 Sector Rotation: Sector is LAGGING
 🚨 Smart Money: Institutional distribution
+🚨 Broker Intelligence: Risk = HIGH/CRITICAL + No ⭐
 🚨 Tech Score: <50 or divergence between timeframes
 🚨 Order Flow: Delta negative (sellers control)
 ```
@@ -180,11 +232,12 @@ alias nepse-heat='cd "/run/media/sijanpaudel/New Volume/Nepse" && python nepse_a
 alias nepse-rot='cd "/run/media/sijanpaudel/New Volume/Nepse" && python nepse_ai_trading/tools/paper_trader.py --sector-rotation'
 alias nepse-smart='cd "/run/media/sijanpaudel/New Volume/Nepse" && python nepse_ai_trading/tools/paper_trader.py --smart-money'
 alias nepse-bulk='cd "/run/media/sijanpaudel/New Volume/Nepse" && python nepse_ai_trading/tools/paper_trader.py --bulk-deals'
+alias nepse-broker='cd "/run/media/sijanpaudel/New Volume/Nepse" && python nepse_ai_trading/tools/paper_trader.py --broker-intelligence'
 alias nepse-scan='cd "/run/media/sijanpaudel/New Volume/Nepse" && python nepse_ai_trading/tools/paper_trader.py --scan --strategy=momentum'
 alias nepse-port='cd "/run/media/sijanpaudel/New Volume/Nepse" && python nepse_ai_trading/tools/paper_trader.py --portfolio'
 
-# Morning Routine (All 3 commands)
-alias nepse-morning='nepse-pos && nepse-rot && nepse-smart'
+# Morning Routine (All 4 commands)
+alias nepse-morning='nepse-pos && nepse-rot && nepse-smart && nepse-broker'
 ```
 
 Then reload: `source ~/.bashrc`

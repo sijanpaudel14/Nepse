@@ -71,10 +71,16 @@ class MarketLogger:
         # Auto-detect timeout based on command
         if timeout is None:
             # Slow commands need more time (API-heavy)
-            if "--smart-money" in cmd or "--bulk-deals" in cmd:
-                timeout = 300  # 5 minutes for API-heavy commands
+            if "--smart-money" in cmd:
+                timeout = 420  # 7 minutes - smart-money takes 6+ min with many API calls
+            elif "--bulk-deals" in cmd:
+                timeout = 360  # 6 minutes for bulk deals
             elif "--scan" in cmd:
-                timeout = 360  # 6 minutes for full market scans (was 3min, too short!)
+                timeout = 420  # 7 minutes for full market scans (600+ stocks)
+            elif "--portfolio" in cmd or "--optimize-portfolio" in cmd:
+                timeout = 180  # 3 minutes - portfolio analysis with live LTP fetching
+            elif "--broker-intelligence" in cmd:
+                timeout = 300  # 5 minutes - broker intelligence with multiple API calls
             else:
                 timeout = 120  # 2 minutes default
         
@@ -136,7 +142,7 @@ class MarketLogger:
         self.session_dir = self._create_session_dir()
         logger.info(f"🚀 Starting NEPSE Market Analysis Session")
         logger.info(f"📁 Output: {self.session_dir}")
-        logger.info(f"⏱️  Estimated time: 13-15 minutes")
+        logger.info(f"⏱️  Estimated time: 25-30 minutes (added sector-wise broker analysis)")
         logger.info(f"")
         
         total_phases = 5
@@ -225,9 +231,51 @@ class MarketLogger:
         master_log.append("### 5️⃣ Bulk Deals\n")
         master_log.append("See: `05_bulk_deals.md`\n\n")
         
+        # 5b. Broker Intelligence - Advanced operator detection
+        logger.info(f"📊 Analyzing broker intelligence (all sectors + top 3 sectors)...")
+        
+        # 5b-1: All sectors overview
+        output, _ = self._run_command(
+            ["python", str(PAPER_TRADER), "--broker-intelligence"],
+            "Broker Intelligence - All Sectors"
+        )
+        self._save_section("05b_broker_intelligence_all.md", output, "Broker Intelligence - All Sectors")
+        master_log.append("### 5️⃣b Broker Intelligence (All Sectors)\n")
+        master_log.append("See: `05b_broker_intelligence_all.md`\n\n")
+        
+        # 5b-2: Hydro sector (most manipulated)
+        output, _ = self._run_command(
+            ["python", str(PAPER_TRADER), "--broker-intelligence", "--sector=hydro"],
+            "Broker Intelligence - Hydro Sector"
+        )
+        self._save_section("05c_broker_intelligence_hydro.md", output, "Broker Intelligence - Hydro")
+        master_log.append("### 5️⃣c Broker Intelligence (Hydro)\n")
+        master_log.append("See: `05c_broker_intelligence_hydro.md`\n\n")
+        
+        # 5b-3: Banks sector (high volume)
+        output, _ = self._run_command(
+            ["python", str(PAPER_TRADER), "--broker-intelligence", "--sector=bank"],
+            "Broker Intelligence - Banks Sector"
+        )
+        self._save_section("05d_broker_intelligence_banks.md", output, "Broker Intelligence - Banks")
+        master_log.append("### 5️⃣d Broker Intelligence (Banks)\n")
+        master_log.append("See: `05d_broker_intelligence_banks.md`\n\n")
+        
+        # 5b-4: Finance sector
+        output, _ = self._run_command(
+            ["python", str(PAPER_TRADER), "--broker-intelligence", "--sector=finance"],
+            "Broker Intelligence - Finance Sector"
+        )
+        self._save_section("05e_broker_intelligence_finance.md", output, "Broker Intelligence - Finance")
+        master_log.append("### 5️⃣e Broker Intelligence (Finance)\n")
+        master_log.append("See: `05e_broker_intelligence_finance.md`\n\n")
+        
         master_log.append("**📝 What to look for in Phase 2:**\n")
         master_log.append("- Stocks with institutional accumulation = Strong candidates\n")
         master_log.append("- Bulk buying (>10L shares) = Insiders know something\n")
+        master_log.append("- ⭐ Favourite Broker = High conviction (repeat buyer)\n")
+        master_log.append("- Broker Score 60+ with ⭐ = Safe entry (not one-day pump)\n")
+        master_log.append("- Risk = HIGH/CRITICAL = Broker may dump, avoid!\n")
         master_log.append("- Bulk selling = Stay away!\n\n")
         master_log.append("---\n\n")
         

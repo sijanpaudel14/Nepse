@@ -230,15 +230,27 @@ class SmartMoneyTracker:
             brokers_1m = self.sharehub.get_broker_analysis(symbol, "1M")
             
             # Calculate net flows
+            # NOTE: Summing ALL brokers gives 0 (closed system).
+            # Instead, track TOP buyers (accumulation) vs TOP sellers (distribution)
             if brokers_1d:
-                result.net_flow_1d = sum(b.net_amount for b in brokers_1d)
+                # Sum only top 10 buyers/sellers to get meaningful flow
+                sorted_1d = sorted(brokers_1d, key=lambda x: x.net_amount, reverse=True)
+                top_buyers = sum(b.net_amount for b in sorted_1d[:10] if b.net_amount > 0)
+                top_sellers = sum(b.net_amount for b in sorted_1d[-10:] if b.net_amount < 0)
+                result.net_flow_1d = top_buyers + top_sellers  # top_sellers is negative
             
             if brokers_1w:
-                result.net_flow_1w = sum(b.net_amount for b in brokers_1w)
+                sorted_1w = sorted(brokers_1w, key=lambda x: x.net_amount, reverse=True)
+                top_buyers = sum(b.net_amount for b in sorted_1w[:10] if b.net_amount > 0)
+                top_sellers = sum(b.net_amount for b in sorted_1w[-10:] if b.net_amount < 0)
+                result.net_flow_1w = top_buyers + top_sellers
             
             if brokers_1m:
-                result.net_flow_1m = sum(b.net_amount for b in brokers_1m)
-                result.net_qty_1m = sum(b.net_quantity for b in brokers_1m)
+                sorted_1m = sorted(brokers_1m, key=lambda x: x.net_amount, reverse=True)
+                top_buyers = sum(b.net_amount for b in sorted_1m[:10] if b.net_amount > 0)
+                top_sellers = sum(b.net_amount for b in sorted_1m[-10:] if b.net_amount < 0)
+                result.net_flow_1m = top_buyers + top_sellers
+                result.net_qty_1m = sum(b.net_quantity for b in sorted_1m[:10] if b.net_quantity > 0)
                 
                 # Calculate top 3 broker concentration
                 total_qty = sum(b.buy_quantity + b.sell_quantity for b in brokers_1m)

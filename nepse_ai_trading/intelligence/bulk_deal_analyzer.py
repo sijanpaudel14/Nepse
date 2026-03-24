@@ -499,7 +499,7 @@ def analyze_bulk_deals(symbol: str = None, sector: str = None) -> str:
     else:
         # Market-wide bulk deals
         report = analyzer.get_market_bulk_deals()
-        return analyzer.format_market_report(report)
+        return analyzer.format_report(report)
     
     if activity['signals']:
         lines.append("")

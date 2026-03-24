@@ -26,6 +26,10 @@ Author: AI Quantitative Engine
 Date: 2026-03-21
 """
 
+# Suppress httpx deprecation warnings from openai/telegram libraries
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="httpx")
+
 import os
 import sys
 import sqlite3
@@ -2204,8 +2208,8 @@ class PaperTrader:
         if dividends:
             total_div = 0
             for div in dividends[:3]:
-                cash = getattr(div, 'cash_dividend', 0) or 0
-                bonus = getattr(div, 'bonus_dividend', 0) or 0
+                cash = getattr(div, 'cash_pct', 0) or 0
+                bonus = getattr(div, 'bonus_pct', 0) or 0
                 year = getattr(div, 'fiscal_year', 'N/A')
                 total = cash + bonus
                 total_div += total
@@ -2746,7 +2750,7 @@ class PaperTrader:
         has_dividends = False
         roe_value = 0.0
         if dividends:
-            total_div = sum((getattr(d, 'cash_dividend', 0) or 0) + (getattr(d, 'bonus_dividend', 0) or 0) for d in dividends[:3])
+            total_div = sum((getattr(d, 'cash_pct', 0) or 0) + (getattr(d, 'bonus_pct', 0) or 0) for d in dividends[:3])
             has_dividends = total_div > 0
         if fundamentals:
             roe_value = fundamentals.roe or 0
@@ -3484,6 +3488,11 @@ def main():
         action="store_true",
         help="Market-wide quant positioning indicators (%% stocks above SMA)"
     )
+    parser.add_argument(
+        "--broker-intelligence",
+        action="store_true",
+        help="Advanced broker analysis: Aggressive Holdings, Stockwise Table, Favourites"
+    )
 
     args = parser.parse_args()
 
@@ -3606,6 +3615,12 @@ def main():
     if args.positioning:
         from intelligence.quant_positioning import get_positioning_report
         report = get_positioning_report()
+        print(report)
+        sys.exit(0)
+    
+    if args.broker_intelligence:
+        from intelligence.broker_intelligence import get_broker_intelligence_report
+        report = get_broker_intelligence_report(sector=args.sector)
         print(report)
         sys.exit(0)
     
