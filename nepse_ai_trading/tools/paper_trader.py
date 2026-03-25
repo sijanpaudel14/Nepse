@@ -38,6 +38,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 import json
+import pandas as pd
 
 # Quiet-by-default logging: only show logs when explicitly requested.
 def _logs_requested(argv: List[str]) -> bool:
@@ -518,18 +519,28 @@ def classify_stock_risk(stock, screener=None) -> dict:
             risk_reasons.append("Dual timeframe validation unavailable")
 
     # Technical hard gates
-    if rsi <= 0 and screener:
-        try:
-            hist = screener.fetcher.safe_fetch_data(stock.symbol, days=30, min_rows=15)
-            rsi_fallback = safe_rsi(hist["close"], period=14) if not hist.empty else None
-            if rsi_fallback is not None:
-                rsi = float(rsi_fallback)
-        except Exception as e:
-            logger.debug(f"RSI fallback failed for {stock.symbol}: {e}")
-    if rsi > 70:
-        risk_reasons.append(f"RSI overbought ({rsi:.1f})")
-    elif 0 < rsi < 40:
-        risk_reasons.append(f"RSI below momentum zone ({rsi:.1f})")
+    # FIX #6: Handle RSI=0 and None properly
+    if rsi is None or rsi <= 0:
+        if screener:
+            try:
+                hist = screener.fetcher.safe_fetch_data(stock.symbol, days=30, min_rows=15)
+                rsi_fallback = safe_rsi(hist["close"], period=14) if not hist.empty else None
+                if rsi_fallback is not None:
+                    rsi = float(rsi_fallback)
+                else:
+                    risk_reasons.append("RSI unavailable (insufficient data)")
+            except Exception as e:
+                logger.debug(f"RSI fallback failed for {stock.symbol}: {e}")
+                risk_reasons.append("RSI unavailable")
+        else:
+            risk_reasons.append("RSI unavailable")
+    
+    # Now check RSI bounds if we have a valid value
+    if rsi is not None and rsi > 0:
+        if rsi > 70:
+            risk_reasons.append(f"RSI overbought ({rsi:.1f})")
+        elif rsi < 40:
+            risk_reasons.append(f"RSI below momentum zone ({rsi:.1f})")
 
     # Fundamental hard gates
     if eps <= 0:
@@ -538,21 +549,27 @@ def classify_stock_risk(stock, screener=None) -> dict:
         risk_reasons.append(f"Weak/Negative ROE ({roe:.1f}%)")
 
     # VWAP premium gate (14D)
+    # FIX #4: Fix VWAP "unavailable" always triggered logic
     vwap_14d = None
     vwap_premium_pct = 0.0
+    vwap_available = False
+    
     if screener:
         try:
             hist = screener.fetcher.safe_fetch_data(stock.symbol, days=20, min_rows=5)
             if not hist.empty:
                 vwap_14d = safe_vwap(hist.tail(14))
+                if vwap_14d is not None and vwap_14d > 0:
+                    vwap_available = True
         except Exception as e:
             logger.warning(f"VWAP fetch failed for {stock.symbol}: {e}")
 
-    if vwap_14d and vwap_14d > 0 and current_price > 0:
+    if vwap_available and current_price > 0:
         vwap_premium_pct = ((current_price / vwap_14d) - 1) * 100
         if vwap_premium_pct > 10:
             risk_reasons.append(f"Price overextended vs 14D VWAP (+{vwap_premium_pct:.1f}%)")
-    else:
+    elif not vwap_available:
+        # Only add this if VWAP truly couldn't be calculated
         risk_reasons.append("14D VWAP unavailable")
 
     # De-duplicate while preserving order
@@ -1578,6 +1595,7 @@ class PaperTrader:
         with_news: bool = False,
         with_ai: bool = False,
         headless: bool = True,
+        historical_date: "date" = None,
     ) -> Dict:
         """
         🔍 DEEP ANALYSIS: Analyze a single stock comprehensively.
@@ -1592,18 +1610,27 @@ class PaperTrader:
             with_news: Enable news scraping
             with_ai: Enable AI verdict
             headless: Run browser in headless mode
+            historical_date: Optional date object for historical analysis (YYYY-MM-DD)
         
         Returns:
             Comprehensive analysis dict
         """
+        from datetime import date as date_type, datetime, timedelta
+        
         symbol = symbol.upper()
         logger.info("=" * 70)
         logger.info(f"🔍 DEEP STOCK ANALYSIS: {symbol}")
+        if historical_date:
+            logger.info(f"📅 HISTORICAL MODE: Analyzing as of {historical_date}")
         logger.info("=" * 70)
         
         print("\n" + "=" * 70)
         print(f"🔍 COMPREHENSIVE ANALYSIS: {symbol}")
-        print("   Analyzing with BOTH Value & Momentum strategies...")
+        if historical_date:
+            print(f"   📅 HISTORICAL ANALYSIS: As of {historical_date}")
+            print(f"   ⏰ Note: All scores/technicals are recalculated for that date")
+        else:
+            print("   Analyzing with BOTH Value & Momentum strategies...")
         print("=" * 70)
         
         # Run analysis with BOTH strategies
@@ -1613,45 +1640,40 @@ class PaperTrader:
         for strategy in ["value", "momentum"]:
             logger.info(f"   📊 Running {strategy.upper()} strategy analysis...")
             
-            screener = MasterStockScreener(strategy=strategy)
+            # Pass analysis_date for historical mode - ensures all indicators use historical data
+            screener = MasterStockScreener(strategy=strategy, analysis_date=historical_date)
             # Pass single_symbol to only load data for this stock (faster!)
             screener._preload_market_data(single_symbol=symbol)
             
-            # Get the specific stock data - try live market first, fallback to historical
+            # Get the specific stock data
             try:
                 target_stock = None
                 
-                # Try 1: Live market data (works during trading hours)
-                market_data = self.fetcher.fetch_live_market()
-                if hasattr(market_data, 'to_dict'):
-                    stocks = market_data.to_dict(orient='records')
-                else:
-                    stocks = market_data if isinstance(market_data, list) else []
-                
-                # Find our stock in live data
-                for s in stocks:
-                    if s.get('symbol', '').upper() == symbol:
-                        target_stock = s
-                        break
-                
-                # Try 2: If market closed, construct stock dict from historical + company details
-                if not target_stock:
-                    logger.info(f"   📅 Market closed - building stock data from historical prices for {symbol}")
+                # HISTORICAL MODE: Use data from specific date
+                if historical_date:
+                    logger.info(f"   📅 Historical mode - fetching data as of {historical_date}")
                     
-                    # Fetch recent historical OHLCV to get the last trading day's price
-                    hist_df = self.fetcher.fetch_price_history(symbol, days=10)
+                    # Fetch price history up to the historical date
+                    # We need data BEFORE that date to calculate indicators
+                    hist_df = self.fetcher.fetch_price_history(symbol, days=400)
                     
                     if hist_df is not None and not hist_df.empty:
-                        # Get the most recent trading day
-                        latest = hist_df.iloc[-1]
-                        last_date = latest.get('date', 'unknown')
-                        data_source_info = str(last_date)
+                        # Filter to only data up to and including the historical date
+                        hist_df['date'] = pd.to_datetime(hist_df['date']).dt.date
+                        historical_data = hist_df[hist_df['date'] <= historical_date]
                         
-                        # Construct a minimal stock dict (handle None values)
-                        # The full analysis (400-day history, indicators) happens inside _score_stock()
+                        if historical_data.empty:
+                            print(f"\n❌ No data available for {symbol} on or before {historical_date}")
+                            continue
+                        
+                        # Get the data for the specific date (or closest prior)
+                        latest = historical_data.iloc[-1]
+                        actual_date = latest.get('date', 'unknown')
+                        data_source_info = str(actual_date)
+                        
                         target_stock = {
                             'symbol': symbol,
-                            'securityName': symbol,  # Will be updated below
+                            'securityName': symbol,
                             'lastTradedPrice': float(latest.get('close') or 0),
                             'close': float(latest.get('close') or 0),
                             'open': float(latest.get('open') or 0),
@@ -1661,14 +1683,15 @@ class PaperTrader:
                             'totalTradedValue': float(latest.get('turnover') or 0),
                             'totalTradedQuantity': float(latest.get('volume') or 0),
                             '_data_source': 'historical',
-                            '_data_date': str(last_date),
+                            '_data_date': str(actual_date),
+                            '_historical_mode': True,
+                            '_analysis_date': str(historical_date),
                         }
                         
-                        # Get company details for sector and name
+                        # Get company details
                         try:
                             details = self.fetcher.fetch_company_details(symbol)
                             if details:
-                                # Extract sector from nested structure
                                 sector_name = ""
                                 security = details.get('security', {})
                                 company_id = security.get('companyId', {}) if security else {}
@@ -1678,7 +1701,6 @@ class PaperTrader:
                                 
                                 target_stock['sectorName'] = sector_name
                                 
-                                # Get company name
                                 company_name = ""
                                 if company_id:
                                     company_name = company_id.get('companyName', symbol)
@@ -1689,9 +1711,79 @@ class PaperTrader:
                         except Exception as e:
                             logger.debug(f"Could not fetch company details: {e}")
                         
-                        if strategy == "value":  # Only print once
-                            print(f"\n   ℹ️  Market is closed. Using data from: {last_date}")
-                            print(f"   📊 Running FULL 4-PILLAR ANALYSIS (400-day history, all indicators)...")
+                        if strategy == "value":
+                            print(f"\n   ℹ️  Using historical data from: {actual_date}")
+                            if actual_date != historical_date:
+                                print(f"   ⚠️  Closest trading day to {historical_date}")
+                            print(f"   📊 Recalculating indicators and scores...")
+                
+                # LIVE MODE: Use current market data or recent historical
+                else:
+                    # Try 1: Live market data (works during trading hours)
+                    market_data = self.fetcher.fetch_live_market()
+                    if hasattr(market_data, 'to_dict'):
+                        stocks = market_data.to_dict(orient='records')
+                    else:
+                        stocks = market_data if isinstance(market_data, list) else []
+                    
+                    # Find our stock in live data
+                    for s in stocks:
+                        if s.get('symbol', '').upper() == symbol:
+                            target_stock = s
+                            break
+                    
+                    # Try 2: If market closed, construct stock dict from historical
+                    if not target_stock:
+                        logger.info(f"   📅 Market closed - building stock data from historical prices for {symbol}")
+                        
+                        hist_df = self.fetcher.fetch_price_history(symbol, days=10)
+                        
+                        if hist_df is not None and not hist_df.empty:
+                            latest = hist_df.iloc[-1]
+                            last_date = latest.get('date', 'unknown')
+                            data_source_info = str(last_date)
+                            
+                            target_stock = {
+                                'symbol': symbol,
+                                'securityName': symbol,
+                                'lastTradedPrice': float(latest.get('close') or 0),
+                                'close': float(latest.get('close') or 0),
+                                'open': float(latest.get('open') or 0),
+                                'high': float(latest.get('high') or 0),
+                                'low': float(latest.get('low') or 0),
+                                'volume': float(latest.get('volume') or 0),
+                                'totalTradedValue': float(latest.get('turnover') or 0),
+                                'totalTradedQuantity': float(latest.get('volume') or 0),
+                                '_data_source': 'historical',
+                                '_data_date': str(last_date),
+                            }
+                            
+                            # Get company details
+                            try:
+                                details = self.fetcher.fetch_company_details(symbol)
+                                if details:
+                                    sector_name = ""
+                                    security = details.get('security', {})
+                                    company_id = security.get('companyId', {}) if security else {}
+                                    sector_master = company_id.get('sectorMaster', {}) if company_id else {}
+                                    if sector_master:
+                                        sector_name = sector_master.get('sectorDescription', '')
+                                    
+                                    target_stock['sectorName'] = sector_name
+                                    
+                                    company_name = ""
+                                    if company_id:
+                                        company_name = company_id.get('companyName', symbol)
+                                    elif security:
+                                        company_name = security.get('securityName', symbol)
+                                    target_stock['securityName'] = company_name
+                                    target_stock['name'] = company_name
+                            except Exception as e:
+                                logger.debug(f"Could not fetch company details: {e}")
+                            
+                            if strategy == "value":
+                                print(f"\n   ℹ️  Market is closed. Using data from: {last_date}")
+                                print(f"   📊 Running FULL 4-PILLAR ANALYSIS (400-day history, all indicators)...")
                 
                 if not target_stock:
                     print(f"\n❌ ERROR: Stock '{symbol}' not found.")
@@ -2527,7 +2619,7 @@ class PaperTrader:
         try:
             hist_30d = screener.fetcher.fetch_price_history(symbol, days=30)
             if hist_30d is not None and len(hist_30d) > 10:
-                import pandas as pd
+                # pd and np already imported at top of file
                 import numpy as np
                 
                 # Get recent highs and lows
@@ -2613,6 +2705,50 @@ class PaperTrader:
             print("   Support/Resistance calculation unavailable.")
         
         # Trade Plan - CONDITIONAL on dump risk and momentum score
+        print("\n" + "-" * 70)
+        print("🎯 PRICE TARGET ANALYSIS")
+        print("-" * 70)
+        
+        # Calculate intelligent price targets
+        try:
+            from analysis.price_target_analyzer import PriceTargetAnalyzer
+            
+            target_analyzer = PriceTargetAnalyzer(fetcher=screener.fetcher, sharehub=screener.sharehub)
+            target_analysis = target_analyzer.analyze(symbol, lookback_days=365)
+            
+            if target_analysis.conservative_target:
+                t = target_analysis.conservative_target
+                print(f"   🟢 CONSERVATIVE: Rs. {t.level:,.2f} (+{t.upside_percent:.1f}%) | {t.probability:.0f}% prob | ~{t.days_estimate}d")
+            
+            if target_analysis.moderate_target and target_analysis.moderate_target.level != (target_analysis.conservative_target.level if target_analysis.conservative_target else 0):
+                t = target_analysis.moderate_target
+                print(f"   🟡 MODERATE:     Rs. {t.level:,.2f} (+{t.upside_percent:.1f}%) | {t.probability:.0f}% prob | ~{t.days_estimate}d")
+            
+            if target_analysis.aggressive_target:
+                t = target_analysis.aggressive_target
+                print(f"   🔴 AGGRESSIVE:   Rs. {t.level:,.2f} (+{t.upside_percent:.1f}%) | {t.probability:.0f}% prob | ~{t.days_estimate}d")
+            
+            if target_analysis.maximum_theoretical:
+                t = target_analysis.maximum_theoretical
+                print(f"   🚀 MAX THEORY:   Rs. {t.level:,.2f} (+{t.upside_percent:.1f}%)")
+            
+            # Risk assessment
+            print()
+            print(f"   📊 Risk Assessment:")
+            print(f"      Nearest Support: Rs. {target_analysis.nearest_support:,.2f}")
+            print(f"      Downside Risk:   -{target_analysis.downside_risk_percent:.1f}%")
+            if target_analysis.risk_reward_ratio > 0:
+                print(f"      Risk/Reward:     1:{target_analysis.risk_reward_ratio:.1f}")
+            print(f"      Trend: {target_analysis.trend_direction} | Momentum: {target_analysis.momentum_score:.0f}/100")
+            
+            if target_analysis.warnings:
+                print()
+                for w in target_analysis.warnings[:2]:  # Show max 2 warnings
+                    print(f"   {w}")
+        except Exception as e:
+            logger.debug(f"Price target analysis failed: {e}")
+            print("   Price target analysis unavailable.")
+        
         print("\n" + "-" * 70)
         print("🎯 SUGGESTED TRADE PLAN")
         print("-" * 70)
@@ -3335,6 +3471,12 @@ def main():
         help="Alias for --action=analyze --stock=SYMBOL"
     )
     parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Historical date for analysis (YYYY-MM-DD format). Analyzes as if today was that date."
+    )
+    parser.add_argument(
         "--symbol",
         type=str,
         help="Stock symbol for buy/skip actions (e.g., --symbol=NICA)"
@@ -3493,6 +3635,31 @@ def main():
         action="store_true",
         help="Advanced broker analysis: Aggressive Holdings, Stockwise Table, Favourites"
     )
+    parser.add_argument(
+        "--price-targets",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="🎯 Intelligent price target prediction - Fibonacci, ATR, Volume Profile, Resistance levels"
+    )
+    parser.add_argument(
+        "--signal",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="📊 Generate entry/exit trading signal with precise timing (when to buy/sell/hold)"
+    )
+    parser.add_argument(
+        "--calendar",
+        action="store_true",
+        help="📅 Trade Calendar: Scan all stocks and show which to buy on which dates for the next 30 days"
+    )
+    parser.add_argument(
+        "--calendar-days",
+        type=int,
+        default=30,
+        help="Number of days to look ahead for --calendar (default: 30)"
+    )
 
     args = parser.parse_args()
 
@@ -3509,6 +3676,85 @@ def main():
     if args.analyze:
         args.action = "analyze"
         args.stock = args.analyze
+
+    def _resolve_current_price(fetcher, symbol: str) -> float:
+        """
+        Resolve the best available current price with robust fallbacks.
+
+        Priority:
+        1) Live market snapshot (during market hours)
+        2) Official daily close from price history (preferred after market close)
+        3) Intraday scrip graph last contract rate
+        4) Latest historical close
+        """
+        symbol = symbol.upper().strip()
+        live_price = None
+        eod_price = None
+        latest_hist_close = None
+        market_open = None
+
+        try:
+            market_open = bool(fetcher.is_market_open())
+        except Exception:
+            market_open = None
+
+        # 1) Live market snapshot
+        try:
+            live_data = fetcher.fetch_live_market()
+            if hasattr(live_data, "to_dict"):
+                stocks = live_data.to_dict(orient="records")
+            else:
+                stocks = live_data if isinstance(live_data, list) else []
+
+            for s in stocks:
+                if str(s.get("symbol", "")).upper() == symbol:
+                    live_price = float(s.get("lastTradedPrice", 0) or s.get("close", 0) or 0)
+                    if live_price > 0:
+                        break
+        except Exception as e:
+            logger.debug(f"{symbol}: live price unavailable: {e}")
+
+        # 2) Historical latest close (also gives official EOD after close)
+        try:
+            hist_df = fetcher.fetch_price_history(symbol, days=10)
+            if hist_df is not None and not hist_df.empty:
+                last_row = hist_df.iloc[-1]
+                latest_hist_close = float(last_row.get("close", 0) or 0)
+                last_date = last_row.get("date")
+                today = datetime.now().date()
+                if last_date == today and latest_hist_close > 0:
+                    eod_price = latest_hist_close
+        except Exception as e:
+            logger.debug(f"{symbol}: history price fallback unavailable: {e}")
+
+        # Prefer official EOD close after market hours
+        if market_open is False and eod_price and eod_price > 0:
+            logger.debug(f"{symbol}: using official EOD close Rs.{eod_price:.2f}")
+            return eod_price
+
+        if live_price and live_price > 0:
+            return live_price
+
+        if eod_price and eod_price > 0:
+            return eod_price
+
+        # 3) Intraday graph fallback
+        try:
+            graph = fetcher.fetch_scrip_price_graph(symbol)
+            if isinstance(graph, list) and graph:
+                last_rate = float(graph[-1].get("contractRate", 0) or 0)
+                if last_rate > 0:
+                    logger.debug(f"{symbol}: using intraday graph fallback Rs.{last_rate:.2f}")
+                    return last_rate
+        except Exception as e:
+            logger.debug(f"{symbol}: intraday graph fallback unavailable: {e}")
+
+        # 4) Latest historical close fallback
+        if latest_hist_close and latest_hist_close > 0:
+            logger.debug(f"{symbol}: using latest historical close Rs.{latest_hist_close:.2f}")
+            return latest_hist_close
+
+        return None
     
     # Handle portfolio commands before PaperTrader instantiation
     if args.portfolio or args.buy_picks is not None or args.sell:
@@ -3624,6 +3870,256 @@ def main():
         print(report)
         sys.exit(0)
     
+    if args.price_targets:
+        from analysis.price_target_analyzer import PriceTargetAnalyzer
+        from data.fetcher import NepseFetcher
+        from data.sharehub_api import ShareHubAPI
+        import os
+        
+        symbol = args.price_targets.upper()
+        print(f"\n🎯 Analyzing price targets for {symbol}...")
+        
+        # Initialize components
+        fetcher = NepseFetcher()
+        sharehub_token = os.getenv("SHAREHUB_AUTH_TOKEN")
+        sharehub = ShareHubAPI(auth_token=sharehub_token) if sharehub_token else None
+        
+        current_price = _resolve_current_price(fetcher, symbol)
+        if current_price:
+            print(f"   📈 Current Price: Rs. {current_price:,.2f}")
+        
+        # Run analysis with live price
+        analyzer = PriceTargetAnalyzer(fetcher=fetcher, sharehub=sharehub)
+        analysis = analyzer.analyze(symbol, lookback_days=365, current_price=current_price)
+        
+        # Print formatted report
+        report = analyzer.format_report(analysis)
+        print(report)
+        sys.exit(0)
+    
+    # ========== TRADE CALENDAR: Scan all stocks for entry opportunities ==========
+    if args.calendar:
+        from analysis.technical_signal_engine import TechnicalSignalEngine
+        from data.fetcher import NepseFetcher
+        from data.sharehub_api import ShareHubAPI
+        from datetime import date, timedelta
+        import time
+        import os
+        
+        print("\n" + "=" * 70)
+        print("📅 TRADE CALENDAR: Scanning all stocks for entry opportunities...")
+        print("=" * 70)
+        
+        # Initialize
+        fetcher = NepseFetcher()
+        sharehub_token = os.getenv("SHAREHUB_AUTH_TOKEN")
+        sharehub = ShareHubAPI(auth_token=sharehub_token) if sharehub_token else None
+        engine = TechnicalSignalEngine(fetcher=fetcher, sharehub=sharehub)
+        
+        # Get all stocks - try live market first, fallback to company list
+        print("📊 Fetching market data...")
+        all_stocks = []
+        try:
+            # Try live market first (has volume data)
+            live_data = fetcher.fetch_live_market()
+            if hasattr(live_data, 'to_dict'):
+                all_stocks = live_data.to_dict(orient='records')
+            elif isinstance(live_data, list):
+                all_stocks = live_data
+            
+            # If live market empty (market closed), use company list
+            if not all_stocks:
+                print("   ⚠️ Market closed, using company list...")
+                company_list = fetcher.fetch_company_list()
+                if isinstance(company_list, list):
+                    # Company list returns StockData objects (Pydantic), not dicts
+                    for c in company_list:
+                        symbol = ""
+                        if isinstance(c, dict):
+                            symbol = str(c.get("symbol", "")).strip()
+                        else:
+                            symbol = str(getattr(c, "symbol", "")).strip()
+                        if symbol:
+                            all_stocks.append({
+                                "symbol": symbol,
+                                "lastTradedPrice": 0,      # LTP fetched inside signal engine
+                                "totalTradedValue": 1000000,  # Synthetic turnover for sorting fallback
+                            })
+        except Exception as e:
+            print(f"❌ Error fetching market data: {e}")
+            sys.exit(1)
+        
+        # Filter stocks - only analyze top 100 by turnover (or first 100 for speed)
+        # This is a balance between coverage and speed
+        active_stocks = []
+        for s in all_stocks:
+            try:
+                # Support both dict payloads and object payloads
+                if isinstance(s, dict):
+                    symbol = str(s.get("symbol", "")).strip()
+                    price = float(s.get("lastTradedPrice", 0) or s.get("close", 0) or 0)
+                    turnover = float(s.get("totalTradedValue", 0) or 0)
+                else:
+                    symbol = str(getattr(s, "symbol", "")).strip()
+                    price = float(getattr(s, "lastTradedPrice", 0) or getattr(s, "close", 0) or 0)
+                    turnover = float(getattr(s, "totalTradedValue", 0) or 0)
+                
+                # Skip if no symbol
+                if not symbol:
+                    continue
+                    
+                active_stocks.append({
+                    'symbol': symbol,
+                    'price': price,
+                    'turnover': turnover
+                })
+            except:
+                continue
+        
+        # Sort by turnover (most active first) and limit
+        active_stocks.sort(key=lambda x: x['turnover'], reverse=True)
+        
+        # Use --quick to analyze fewer stocks
+        max_stocks = 30 if args.quick else 100
+        active_stocks = active_stocks[:max_stocks]
+        
+        est_time = len(active_stocks) * 1.5
+        print(f"📈 Analyzing top {len(active_stocks)} stocks{'(quick mode)' if args.quick else ''}...")
+        print(f"⏳ Estimated time: {est_time // 60:.0f}m {est_time % 60:.0f}s")
+        print()
+        
+        # Store results by entry week
+        calendar_data = {}  # {week_key: [stock_entries]}
+        today = date.today()
+        calendar_days = args.calendar_days
+        
+        # Analyze each stock (with progress)
+        total = len(active_stocks)
+        for idx, stock_info in enumerate(active_stocks, 1):
+            symbol = stock_info['symbol']
+            price = stock_info['price']
+            
+            # Progress bar
+            progress = int((idx / total) * 40)
+            bar = "█" * progress + "░" * (40 - progress)
+            print(f"\r   [{bar}] {idx}/{total} Analyzing {symbol:<8}", end="", flush=True)
+            
+            try:
+                # Generate signal (this is the actual analysis)
+                signal = engine.generate_signal(symbol, current_price=price)
+                
+                # Only include stocks with entry opportunity in next N days
+                if signal.estimated_entry_date and signal.days_until_entry <= calendar_days:
+                    entry_date = signal.estimated_entry_date
+                    
+                    # Calculate week number from today
+                    days_away = (entry_date - today).days
+                    if days_away < 0:
+                        week_key = "TODAY"
+                    elif days_away <= 7:
+                        week_key = "WEEK 1 (Next 7 days)"
+                    elif days_away <= 14:
+                        week_key = "WEEK 2 (8-14 days)"
+                    elif days_away <= 21:
+                        week_key = "WEEK 3 (15-21 days)"
+                    else:
+                        week_key = "WEEK 4+ (22-30 days)"
+                    
+                    if week_key not in calendar_data:
+                        calendar_data[week_key] = []
+                    
+                    # Store entry info
+                    t1_pct = (signal.target_1 / signal.entry_zone_low - 1) * 100 if signal.entry_zone_low > 0 else 0
+                    calendar_data[week_key].append({
+                        'symbol': symbol,
+                        'entry_date': entry_date,
+                        'entry_price': signal.entry_zone_low,
+                        'current_price': price,
+                        'entry_prob': signal.entry_probability,
+                        't1_price': signal.target_1,
+                        't1_pct': t1_pct,
+                        't1_prob': signal.t1_probability,
+                        'stop_loss': signal.stop_loss,
+                        'days_away': days_away,
+                        'signal_type': signal.signal_type.value,
+                        'trend_phase': signal.trend_phase.value,
+                    })
+                
+                # Small delay for rate limiting
+                time.sleep(0.5)
+                
+            except Exception as e:
+                logger.debug(f"Error analyzing {symbol}: {e}")
+                continue
+        
+        print("\n\n" + "=" * 70)
+        print("📅 TRADE CALENDAR - Next 30 Days Entry Opportunities")
+        print("=" * 70)
+        
+        # Sort each week by entry probability (highest first)
+        week_order = ["TODAY", "WEEK 1 (Next 7 days)", "WEEK 2 (8-14 days)", 
+                      "WEEK 3 (15-21 days)", "WEEK 4+ (22-30 days)"]
+        
+        total_opportunities = 0
+        for week_key in week_order:
+            if week_key in calendar_data:
+                entries = calendar_data[week_key]
+                # Sort by entry probability
+                entries.sort(key=lambda x: (-x['entry_prob'], -x['t1_pct']))
+                
+                print(f"\n🗓️ {week_key}")
+                print("-" * 65)
+                print(f"   {'Stock':<8} {'Entry Date':<12} {'Entry @':<10} {'Target':<12} {'Prob':<6} {'Phase'}")
+                print("-" * 65)
+                
+                for entry in entries[:10]:  # Top 10 per week
+                    total_opportunities += 1
+                    entry_str = entry['entry_date'].strftime('%Y-%m-%d')
+                    target_str = f"Rs.{entry['t1_price']:.0f} (+{entry['t1_pct']:.0f}%)"
+                    print(f"   {entry['symbol']:<8} {entry_str:<12} Rs.{entry['entry_price']:<7.0f} {target_str:<12} {entry['entry_prob']:.0f}%    {entry['trend_phase']}")
+        
+        print("\n" + "=" * 70)
+        print(f"📊 SUMMARY: {total_opportunities} entry opportunities found in next {calendar_days} days")
+        print("=" * 70)
+        
+        # Quick picks for immediate action
+        immediate = calendar_data.get("TODAY", []) + calendar_data.get("WEEK 1 (Next 7 days)", [])
+        if immediate:
+            immediate.sort(key=lambda x: (-x['entry_prob'], -x['t1_pct']))
+            print("\n🔥 TOP IMMEDIATE PICKS (This Week):")
+            print("-" * 50)
+            for i, entry in enumerate(immediate[:5], 1):
+                print(f"   #{i} {entry['symbol']} → Buy at Rs.{entry['entry_price']:.0f}")
+                print(f"      📅 Entry: {entry['entry_date'].strftime('%Y-%m-%d')} | T1: +{entry['t1_pct']:.0f}% | Prob: {entry['entry_prob']:.0f}%")
+        
+        print("\n💡 Use --signal <SYMBOL> for detailed entry/exit plan.")
+        sys.exit(0)
+    
+    if args.signal:
+        from analysis.technical_signal_engine import TechnicalSignalEngine
+        from data.fetcher import NepseFetcher
+        from data.sharehub_api import ShareHubAPI
+        import os
+        
+        symbol = args.signal.upper()
+        print(f"\n📊 Generating trading signal for {symbol}...")
+        
+        # Initialize components
+        fetcher = NepseFetcher()
+        sharehub_token = os.getenv("SHAREHUB_AUTH_TOKEN")
+        sharehub = ShareHubAPI(auth_token=sharehub_token) if sharehub_token else None
+        
+        current_price = _resolve_current_price(fetcher, symbol)
+        
+        # Generate signal
+        engine = TechnicalSignalEngine(fetcher=fetcher, sharehub=sharehub)
+        signal = engine.generate_signal(symbol, current_price=current_price)
+        
+        # Print formatted report
+        report = engine.format_signal_report(signal)
+        print(report)
+        sys.exit(0)
+    
     trader = PaperTrader()
     
     # ========== PRODUCTION HEARTBEAT ==========
@@ -3684,11 +4180,23 @@ def main():
                 print("   Example: --action=analyze --stock=NHPC")
                 sys.exit(1)
             
+            # Parse historical date if provided
+            historical_date = None
+            if args.date:
+                try:
+                    # datetime already imported at top of file
+                    historical_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+                    print(f"📅 HISTORICAL ANALYSIS MODE: Analyzing as if today was {args.date}")
+                except ValueError:
+                    print(f"❌ Invalid date format: {args.date}. Use YYYY-MM-DD")
+                    sys.exit(1)
+            
             result = trader.analyze_single_stock(
                 symbol=stock_symbol.upper(),
                 with_news=args.with_news or args.full,
                 with_ai=args.with_ai or args.full,
                 headless=not args.visible,
+                historical_date=historical_date,
             )
             # Output already printed by the method
         

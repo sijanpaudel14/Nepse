@@ -1,5 +1,7 @@
 # 🚀 NEPSE AUTOMATED MARKET LOGGER - USER GUIDE
 
+> **Last Updated:** 2026-03-25
+
 ## 📖 What Is This?
 
 A **simple background automation tool** that runs all your trading intelligence commands in the optimal sequence and saves everything to timestamped Markdown files.
@@ -33,6 +35,8 @@ A **simple background automation tool** that runs all your trading intelligence 
 - Technical composite scores
 - Order flow analysis
 - Dividend forecasts
+- 🆕 **Trading signals** (entry/exit timing with Wyckoff phases)
+- 🆕 **Price targets** (multi-level targets with probabilities)
 
 ---
 
@@ -93,6 +97,8 @@ market_logs/
     ├── 08_1_techscore_NGPL.md          ← Phase 5: Stock 1 tech score
     ├── 08_1_orderflow_NGPL.md          ← Phase 5: Stock 1 order flow
     ├── 08_1_dividend_NGPL.md           ← Phase 5: Stock 1 dividend
+    ├── 08_1_signal_NGPL.md             ← Phase 5: 🆕 Stock 1 trading signal
+    ├── 08_1_targets_NGPL.md            ← Phase 5: 🆕 Stock 1 price targets
     └── ... (similar for Stock 2, 3)
 ```
 
@@ -159,6 +165,20 @@ For each GOOD stock, read:
 - **Tech score** → Technical alignment
 - **Order flow** → Is buying pressure strong?
 - **Dividend** → Bonus coming?
+- **🆕 Signal** → BUY/SELL/HOLD with entry zone & confidence
+- **🆕 Targets** → Conservative, Moderate, Aggressive price levels
+
+**Example interpretation:**
+```
+✅ Signal: BUY (65% confidence)
+   Entry: Rs.485-Rs.495
+   Stop Loss: Rs.460 (trailing 11.2%)
+   
+✅ Targets:
+   Conservative: Rs.530 (+8%) | 90% prob | 3 days
+   Moderate: Rs.578 (+17%) | 70% prob | 10 days
+   Aggressive: Rs.640 (+30%) | 45% prob | 20 days
+```
 
 ### Step 6: Make Decision
 Use the decision framework in `00_MASTER_SUMMARY.md`:
@@ -315,6 +335,12 @@ After reviewing automated logs, you can run specific commands manually:
 # Deep dive a specific stock
 python paper_trader.py --analyze NGPL
 
+# 🆕 Get trading signal (entry/exit timing)
+python paper_trader.py --signal NGPL
+
+# 🆕 Get price targets (multi-level)
+python paper_trader.py --price-target NGPL
+
 # Check portfolio
 python paper_trader.py --portfolio
 
@@ -342,14 +368,22 @@ schedule.every().day.at("11:15").do(run_if_market_open)  # Earlier
 schedule.every().day.at("14:50").do(run_if_market_open)  # Later
 ```
 
-### Add more commands
-Add to `run_full_analysis()` method:
+### Add more commands (e.g., signals and targets)
+Add to `run_full_analysis()` method around line 280:
 ```python
+# Add trading signal for each stock
 output, _ = self._run_command(
-    ["python", str(PAPER_TRADER), "--your-command"],
-    "Your Description"
+    ["python", str(PAPER_TRADER), "--signal", stock],
+    f"Trading Signal - {stock}"
 )
-self._save_section("09_your_file.md", output, "Your Title")
+self._save_section(f"08_{idx}_signal_{stock}.md", output, f"Trading Signal: {stock}")
+
+# Add price targets for each stock
+output, _ = self._run_command(
+    ["python", str(PAPER_TRADER), "--price-target", stock],
+    f"Price Targets - {stock}"
+)
+self._save_section(f"08_{idx}_targets_{stock}.md", output, f"Price Targets: {stock}")
 ```
 
 ---

@@ -222,7 +222,7 @@ class NepseFetcher:
             logger.error(f"Failed to fetch history for {symbol}: {e}")
             raise NepseAPIError(f"Price history fetch failed: {e}")
 
-    def safe_fetch_data(self, symbol: str, days: int = 60, min_rows: int = 14) -> pd.DataFrame:
+    def safe_fetch_data(self, symbol: str, days: int = 60, min_rows: int = 14, end_date: "date" = None) -> pd.DataFrame:
         """
         Fetch and validate OHLCV safely for indicator/scoring pipelines.
 
@@ -231,6 +231,12 @@ class NepseFetcher:
         - string/invalid numeric values
         - missing OHLC fields
         - zero-volume days and malformed OHLC relationships
+        
+        Args:
+            symbol: Stock symbol
+            days: Number of days to fetch
+            min_rows: Minimum rows required
+            end_date: Optional date to truncate data to (for historical analysis)
         """
         symbol = symbol.upper().strip()
         required_cols = ["date", "open", "high", "low", "close", "volume"]
@@ -263,8 +269,27 @@ class NepseFetcher:
             cleaned = cleaned.dropna(subset=["date"]).sort_values("date").drop_duplicates(subset=["date"], keep="last")
             return cleaned.reset_index(drop=True)
 
+        def _truncate_to_date(df: pd.DataFrame, cutoff_date) -> pd.DataFrame:
+            """Truncate dataframe to data on or before cutoff_date for historical analysis."""
+            if cutoff_date is None or df.empty:
+                return df
+            # Ensure date column is proper date type for comparison
+            if 'date' in df.columns:
+                df_copy = df.copy()
+                if hasattr(cutoff_date, 'date'):  # datetime object
+                    cutoff_date = cutoff_date.date()
+                # Filter to only data <= cutoff_date
+                mask = df_copy['date'] <= cutoff_date
+                truncated = df_copy[mask].copy()
+                if len(truncated) < len(df):
+                    logger.debug(f"{symbol}: Truncated to {cutoff_date}, {len(truncated)}/{len(df)} rows")
+                return truncated.reset_index(drop=True)
+            return df
+
         try:
             df = _validate(self.fetch_price_history(symbol, days=days))
+            df = _truncate_to_date(df, end_date)  # Apply historical date filter
+            
             if len(df) >= min_rows:
                 return df
 
@@ -273,6 +298,7 @@ class NepseFetcher:
                 f"{symbol}: only {len(df)} rows from {days} days, retrying with {fallback_days} days for indicator safety"
             )
             fallback_df = _validate(self.fetch_price_history(symbol, days=fallback_days))
+            fallback_df = _truncate_to_date(fallback_df, end_date)  # Apply historical date filter
 
             if len(fallback_df) < min_rows:
                 logger.warning(

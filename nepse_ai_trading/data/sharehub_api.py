@@ -764,6 +764,42 @@ class ShareHubAPI:
             except InvalidOperation:
                 return default
         return default
+    
+    def _safe_int(self, value: Any, default: int = 0) -> int:
+        """Parse API values to int safely, handling commas and invalid formats."""
+        try:
+            if value is None:
+                return default
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                # Use parse_nepse_number to handle commas
+                parsed = parse_nepse_number(value)
+                if parsed is None:
+                    return default
+                return int(parsed)
+            return int(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Failed to convert to int: {value}, using default {default}")
+            return default
+    
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Parse API values to float safely, handling commas and invalid formats."""
+        try:
+            if value is None:
+                return default
+            if isinstance(value, float):
+                return value
+            if isinstance(value, str):
+                # Use parse_nepse_number to handle commas
+                parsed = parse_nepse_number(value)
+                if parsed is None:
+                    return default
+                return float(parsed)
+            return float(value)
+        except (ValueError, TypeError):
+            logger.warning(f"Failed to convert to float: {value}, using default {default}")
+            return default
 
     def _calculate_annualized_eps(self, quarter: str, net_profit: Any, paidup_capital: Any) -> float:
         """
@@ -860,10 +896,14 @@ class ShareHubAPI:
         result.fiscal_year = record.get("fiscalYear", "")
         result.quarter = record.get("quarter", "")
 
-        # Parse values array
-        values = record.get("values", [])
+        # Parse values array - FIX #9: Handle null values
+        values = record.get("values") or []
+        if not isinstance(values, list):
+            logger.warning(f"Values field is not a list for {symbol}: {type(values)}")
+            values = []
+        
         values_dict = {v["key"]: v["value"]
-                       for v in values if v.get("value") is not None}
+                       for v in values if isinstance(v, dict) and v.get("value") is not None}
 
         # Map to our fields
         result.eps = float(self._to_decimal_number(values_dict.get("eps", 0)))
@@ -1360,13 +1400,13 @@ class ShareHubAPI:
             broker_code = item.get("brokerCode") or item.get("brokerId", "")
             broker_name = item.get("brokerName") or item.get("name", "")
             
-            # Calculate net if not provided
-            buy_qty = int(item.get("buyQty") or item.get("buyQuantity", 0) or 0)
-            sell_qty = int(item.get("sellQty") or item.get("sellQuantity", 0) or 0)
-            buy_amt = float(item.get("buyAmt") or item.get("buyAmount", 0) or 0)
-            sell_amt = float(item.get("sellAmt") or item.get("sellAmount", 0) or 0)
-            net_qty = int(item.get("netQty") or item.get("netQuantity", buy_qty - sell_qty) or 0)
-            net_amt = float(item.get("netAmt") or item.get("netAmount", buy_amt - sell_amt) or 0)
+            # FIX #2: Use safe conversion methods to handle comma-formatted numbers
+            buy_qty = self._safe_int(item.get("buyQty") or item.get("buyQuantity"))
+            sell_qty = self._safe_int(item.get("sellQty") or item.get("sellQuantity"))
+            buy_amt = self._safe_float(item.get("buyAmt") or item.get("buyAmount"))
+            sell_amt = self._safe_float(item.get("sellAmt") or item.get("sellAmount"))
+            net_qty = self._safe_int(item.get("netQty") or item.get("netQuantity", buy_qty - sell_qty))
+            net_amt = self._safe_float(item.get("netAmt") or item.get("netAmount", buy_amt - sell_amt))
             
             brokers.append(BrokerData(
                 broker_code=str(broker_code),
@@ -1444,12 +1484,13 @@ class ShareHubAPI:
             broker_code = item.get("brokerCode") or item.get("brokerId", "")
             broker_name = item.get("brokerName") or item.get("name", "")
             
-            buy_qty = int(item.get("buyQty") or item.get("buyQuantity", 0) or 0)
-            sell_qty = int(item.get("sellQty") or item.get("sellQuantity", 0) or 0)
-            buy_amt = float(item.get("buyAmt") or item.get("buyAmount", 0) or 0)
-            sell_amt = float(item.get("sellAmt") or item.get("sellAmount", 0) or 0)
-            net_qty = int(item.get("netQty") or item.get("netQuantity", buy_qty - sell_qty) or 0)
-            net_amt = float(item.get("netAmt") or item.get("netAmount", buy_amt - sell_amt) or 0)
+            # FIX #2: Use safe conversion methods
+            buy_qty = self._safe_int(item.get("buyQty") or item.get("buyQuantity"))
+            sell_qty = self._safe_int(item.get("sellQty") or item.get("sellQuantity"))
+            buy_amt = self._safe_float(item.get("buyAmt") or item.get("buyAmount"))
+            sell_amt = self._safe_float(item.get("sellAmt") or item.get("sellAmount"))
+            net_qty = self._safe_int(item.get("netQty") or item.get("netQuantity", buy_qty - sell_qty))
+            net_amt = self._safe_float(item.get("netAmt") or item.get("netAmount", buy_amt - sell_amt))
             
             brokers.append(BrokerData(
                 broker_code=str(broker_code),

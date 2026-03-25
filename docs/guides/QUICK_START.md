@@ -1,5 +1,7 @@
 # 🚀 QUICK START - NEPSE AUTOMATED LOGGER
 
+> **Last Updated:** 2026-03-25
+
 ## ⚡ Fastest Way to Get Started
 
 ### 1️⃣ Run Your First Analysis (RIGHT NOW!)
@@ -119,7 +121,90 @@ pkill -f auto_market_logger
 08_1_techscore_NGPL.md   → Technical alignment Stock #1
 08_1_orderflow_NGPL.md   → Buy/sell pressure Stock #1
 08_1_dividend_NGPL.md    → Dividend forecast Stock #1
+08_1_signal_NGPL.md      → 🆕 Trading signal Stock #1 (BUY/SELL/HOLD)
+08_1_targets_NGPL.md     → 🆕 Price targets Stock #1 (Conservative/Moderate/Aggressive)
 ... (similar for Stock #2, #3)
+```
+
+---
+
+## 🆕 First Commands to Try (After Reading Logs)
+
+After the auto logger finishes, try these individual commands to understand what each does:
+
+### 1️⃣ Get Trading Signal for a Stock
+```bash
+python nepse_ai_trading/tools/paper_trader.py --signal NGPL
+```
+
+**What it shows:**
+- Signal type: BUY, SELL, or HOLD
+- Confidence %: 10-100% (higher = better)
+- Entry zone: Low-high range for optimal entry
+- 3 Targets: Conservative (T1), Moderate (T2), Aggressive (T3)
+- Stop loss: Dynamic based on volatility
+- Hold duration: Estimated days to target
+
+**Example output:**
+```
+📊 TRADING SIGNAL: NGPL
+   🟢 BUY | Confidence: 72%
+   Trend Phase: MARKUP
+   
+💰 ENTRY LEVELS
+   Entry Zone: Rs. 485 - Rs. 495
+   Stop Loss:  Rs. 460 (trailing 11.2%)
+   
+🎯 TARGETS
+   T1: Rs. 530 (+8%)  | 90% prob | 3d
+   T2: Rs. 578 (+17%) | 70% prob | 10d
+   T3: Rs. 640 (+30%) | 45% prob | 20d
+```
+
+---
+
+### 2️⃣ Get Price Targets for a Stock
+```bash
+python nepse_ai_trading/tools/paper_trader.py --price-target NGPL
+```
+
+**What it shows:**
+- 4 target levels with probabilities
+- Risk assessment (support levels, downside risk)
+- Risk/reward ratio
+- Calculation methods (ATR, Fibonacci, S/R, Volume Profile)
+
+**Example output:**
+```
+🎯 PRICE TARGET ANALYSIS: NGPL
+   Current: Rs. 490 | Trend: BULLISH | Momentum: 78/100
+   
+📈 PRICE TARGETS
+   🟢 CONSERVATIVE: Rs. 530 (+8%) | 90% prob | 3d
+   🟡 MODERATE:     Rs. 592 (+21%) | 70% prob | 12d
+   🔴 AGGRESSIVE:   Rs. 735 (+50%) | 35% prob | 45d
+   🚀 MAX THEORY:   Rs. 940 (+92%)
+   
+📊 RISK ASSESSMENT
+   Support: Rs. 455 | Downside: -7%
+   Risk/Reward: 1:2.8 ✅
+```
+
+---
+
+### 3️⃣ Complete Workflow Example
+```bash
+# Step 1: Check market regime
+python nepse_ai_trading/tools/paper_trader.py --positioning
+
+# Step 2: Get trading signal
+python nepse_ai_trading/tools/paper_trader.py --signal NGPL
+
+# Step 3: Get price targets
+python nepse_ai_trading/tools/paper_trader.py --price-target NGPL
+
+# Step 4: Deep analysis if needed
+python nepse_ai_trading/tools/paper_trader.py --analyze NGPL
 ```
 
 ---

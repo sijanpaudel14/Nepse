@@ -396,8 +396,8 @@ class MasterStockScreener:
         "mutual_fund": "Mutual Fund"
     }
     
-    def __init__(self, sharehub_token: str = None, strategy: str = "value", target_sector: str = None, max_price: float = None):
-        """Initialize with optional ShareHub auth token, strategy, target sector, and max price budget."""
+    def __init__(self, sharehub_token: str = None, strategy: str = "value", target_sector: str = None, max_price: float = None, analysis_date: "date" = None):
+        """Initialize with optional ShareHub auth token, strategy, target sector, max price budget, and analysis_date for historical mode."""
         import os
         from dotenv import load_dotenv
         from core.config import settings as app_settings
@@ -447,6 +447,46 @@ class MasterStockScreener:
         self._nepse_5d_return: float = 0.0
         self._regulatory_warnings: List[str] = []  # NRB/SEBON notices
         self._using_historical_fallback: bool = False  # True if market closed, using historical data
+        
+        # ===== HISTORICAL ANALYSIS MODE =====
+        # When set, all fetched price dataframes are truncated to <= this date
+        # Technical indicators (RSI, EMA, VWAP, ATR) are calculated only on historical data
+        # NOTE: Broker data APIs don't support date filtering - broker scores use current data
+        self._analysis_date: Optional[date] = analysis_date
+        if self._analysis_date:
+            logger.info(f"📅 HISTORICAL MODE: Indicators will be calculated as of {self._analysis_date}")
+    
+    def _fetch_historical_safe(self, symbol: str, days: int = 60, min_rows: int = 14) -> pd.DataFrame:
+        """
+        Wrapper around fetcher.safe_fetch_data that respects _analysis_date.
+        
+        When _analysis_date is set, truncates returned data to <= that date,
+        ensuring all technical indicators are calculated on historical data only.
+        """
+        return self.fetcher.safe_fetch_data(
+            symbol, 
+            days=days, 
+            min_rows=min_rows, 
+            end_date=self._analysis_date
+        )
+    
+    def _fetch_price_history_historical(self, symbol: str, days: int = 60) -> pd.DataFrame:
+        """
+        Wrapper around fetcher.fetch_price_history that respects _analysis_date.
+        
+        When _analysis_date is set, truncates returned data to <= that date.
+        """
+        df = self.fetcher.fetch_price_history(symbol, days=days)
+        if df is None or df.empty or self._analysis_date is None:
+            return df if df is not None else pd.DataFrame()
+        
+        # Truncate to analysis date
+        if 'date' in df.columns:
+            df = df.copy()
+            df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.date
+            df = df[df['date'] <= self._analysis_date]
+            logger.debug(f"{symbol}: Truncated price history to {self._analysis_date}, {len(df)} rows")
+        return df.reset_index(drop=True)
     
     def check_market_regime(self) -> Tuple[str, str]:
         """
@@ -1301,7 +1341,7 @@ class MasterStockScreener:
             # === METHOD 2: VWAP FROM PRICE HISTORY (Fallback) ===
             if broker_avg_cost is None or broker_avg_cost <= 0:
                 try:
-                    df = self.fetcher.fetch_price_history(symbol, days=vwap_lookback_days + 5)
+                    df = self._fetch_price_history_historical(symbol, days=vwap_lookback_days + 5)
                     
                     if df is not None and not df.empty and len(df) >= 5:
                         df = df.tail(vwap_lookback_days)
@@ -1491,7 +1531,7 @@ class MasterStockScreener:
         """
         try:
             # Fetch today's OHLCV data
-            df = self.fetcher.fetch_price_history(symbol, days=25)
+            df = self._fetch_price_history_historical(symbol, days=25)
             
             if df is None or df.empty or len(df) < 2:
                 return None
@@ -1800,7 +1840,7 @@ class MasterStockScreener:
         for symbol in symbols_to_check:
             try:
                 # Fetch recent price history (just need last trading day)
-                df = self.fetcher.fetch_price_history(symbol, days=7)
+                df = self._fetch_price_history_historical(symbol, days=7)
                 
                 if df is None or df.empty:
                     continue
@@ -2586,9 +2626,12 @@ class MasterStockScreener:
                 reasons.append(f"🔴 Negative Book Value: Rs. {book_value:.2f} (INSOLVENT -10)")
                 # Still calculate other metrics but company is fundamentally broken
             
-            # Calculate PBV if book value is sufficiently positive (avoid division by near-zero)
-            # Minimum threshold of 1.0 to prevent extreme PBV values
-            pbv = ltp / book_value if book_value >= 1.0 else 0
+            # FIX #3: PBV logic - Use None for invalid book values, don't set to 0
+            # Setting to 0 makes it look like the stock has zero price-to-book
+            if book_value > 0:
+                pbv = ltp / book_value
+            else:
+                pbv = None  # Invalid book value, can't calculate PBV
             
             fund_data = {
                 "pe": pe,
@@ -2648,7 +2691,8 @@ class MasterStockScreener:
                 reasons.append(f"🔴 Negative PE {pe:.1f} (company making losses) (-5)")
             
             # === PBV Scoring (only if book value is positive) ===
-            if book_value > 0 and pbv > 0:
+            # FIX #3: Handle None PBV properly
+            if pbv is not None and pbv > 0:
                 if pbv < 2:
                     score += 6
                     reasons.append(f"💰 PBV {pbv:.2f} is undervalued (+6)")
@@ -2722,7 +2766,7 @@ class MasterStockScreener:
         try:
             # Fetch 365-day price history (1 year) for accurate 52-week High & Long-term Trends
             # We need enough data for EMA200 and true Blue Sky Breakouts
-            df = self.fetcher.safe_fetch_data(symbol, days=400, min_rows=21)
+            df = self._fetch_historical_safe(symbol, days=400, min_rows=21)
             
             if df is None or len(df) < 21:
                 # Fallback to basic scoring from current data
@@ -3098,7 +3142,7 @@ class MasterStockScreener:
         vwap_premium_pct = 0.0
         if symbol and ltp > 0:
             try:
-                hist = self.fetcher.safe_fetch_data(symbol, days=20, min_rows=5)
+                hist = self._fetch_historical_safe(symbol, days=20, min_rows=5)
                 if not hist.empty:
                     vwap_14d = safe_vwap(hist.tail(14))
                     if vwap_14d and vwap_14d > 0:

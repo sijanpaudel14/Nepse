@@ -30,8 +30,11 @@
     "SBI",
     "PPCL",
     "DHPL",
-    "MDB"
+    "MDB",
+    "KSBBL",
+    "RADHI",
+    "RIDI"
   ],
   "total_allocation": 0.09,
-  "last_updated": "2026-03-24 15:12:15"
+  "last_updated": "2026-03-25 11:16:27"
 }

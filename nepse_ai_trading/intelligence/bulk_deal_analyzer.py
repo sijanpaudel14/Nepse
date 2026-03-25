@@ -478,6 +478,7 @@ def analyze_bulk_deals(symbol: str = None, sector: str = None) -> str:
     if symbol:
         # Single stock analysis
         activity = analyzer.detect_promoter_activity(symbol)
+        summary = activity['summary']
         
         lines = [
             f"🔍 BULK DEAL ANALYSIS: {symbol}",
@@ -486,25 +487,23 @@ def analyze_bulk_deals(symbol: str = None, sector: str = None) -> str:
             f"Risk Level: {activity['risk_level']}",
         ]
         
-        if activity['total_quantity'] > 0:
-            lines.append(f"Total Quantity: {activity['total_quantity']:,} shares")
-            lines.append(f"Avg Price: Rs.{activity['avg_price']:.2f}")
+        # FIX #1: Use summary object, not non-existent keys
+        if summary.total_deals > 0:
+            lines.append(f"Total Deals: {summary.total_deals}")
+            lines.append(f"Net Quantity: {summary.net_quantity:,} shares")
+            if summary.net_quantity != 0:
+                avg_price = summary.net_amount / summary.net_quantity
+                lines.append(f"Avg Price: Rs.{avg_price:.2f}")
         
-        if activity['patterns']:
-            lines.append("\nPatterns Detected:")
-            for pattern in activity['patterns']:
-                lines.append(f"  • {pattern}")
+        # FIX #2: Move signals handling BEFORE return (was dead code)
+        if activity['signals']:
+            lines.append("")
+            lines.append("Signals:")
+            for sig in activity['signals']:
+                lines.append(f"  {sig}")
         
         return "\n".join(lines)
     else:
         # Market-wide bulk deals
         report = analyzer.get_market_bulk_deals()
         return analyzer.format_report(report)
-    
-    if activity['signals']:
-        lines.append("")
-        lines.append("Signals:")
-        for sig in activity['signals']:
-            lines.append(f"  {sig}")
-    
-    return "\n".join(lines)

@@ -103,8 +103,18 @@ class TechnicalIndicators:
         short_period = short_period or settings.ema_short
         long_period = long_period or settings.ema_long
         
-        self.df[f"ema_{short_period}"] = ta.ema(self.df["close"], length=short_period)
-        self.df[f"ema_{long_period}"] = ta.ema(self.df["close"], length=long_period)
+        # FIX #10: Add data length validation before EMA calculation
+        if len(self.df) < short_period:
+            logger.warning(f"Insufficient data for EMA{short_period}: have {len(self.df)} rows, need {short_period}")
+            self.df[f"ema_{short_period}"] = None
+        else:
+            self.df[f"ema_{short_period}"] = ta.ema(self.df["close"], length=short_period)
+        
+        if len(self.df) < long_period:
+            logger.warning(f"Insufficient data for EMA{long_period}: have {len(self.df)} rows, need {long_period}")
+            self.df[f"ema_{long_period}"] = None
+        else:
+            self.df[f"ema_{long_period}"] = ta.ema(self.df["close"], length=long_period)
         
         return self.df
     
