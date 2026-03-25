@@ -43,7 +43,7 @@ python nepse_ai_trading/tools/paper_trader.py --positioning
 python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 
 # 11. 🆕 Price Target Analyzer - Multi-level targets with probabilities
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
 ```
 
 ---
@@ -364,7 +364,7 @@ python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 
 **Usage Tips:**
 1. **Always check signal validity date** - NEPSE signals expire in 1-2 days
-2. **Combine with --price-target** - Validate targets independently
+2. **Combine with --price-targets** - Validate targets independently
 3. **Respect the phase** - Don't buy in DISTRIBUTION, don't sell in ACCUMULATION
 4. **Trust the stop loss** - 2.75×ATR is wide enough for NEPSE volatility
 5. **Trail your stops** - As price rises, move stop up (never widen it)
@@ -383,10 +383,10 @@ python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 **Command:**
 ```bash
 # Get price targets for a stock
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
 
-# Get detailed breakdown (22+ target levels)
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL --detailed
+# Get standard target report
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
 ```
 
 **Output Example:**
@@ -522,7 +522,7 @@ Target Hierarchy:
 **Common Workflow:**
 ```bash
 # Step 1: Check dump risk
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
 
 # Step 2: If dump risk LOW, check signal
 python nepse_ai_trading/tools/paper_trader.py --signal SMHL
@@ -558,7 +558,7 @@ python nepse_ai_trading/tools/paper_trader.py --signal GVL
 python nepse_ai_trading/tools/paper_trader.py --signal PPCL
 
 # 6. 🆕 Check price targets
-python nepse_ai_trading/tools/paper_trader.py --price-target GVL
+python nepse_ai_trading/tools/paper_trader.py --price-targets GVL
 ```
 
 ### Single Stock Analysis (Complete)
@@ -569,7 +569,7 @@ python nepse_ai_trading/tools/paper_trader.py --tech-score NGPL
 python nepse_ai_trading/tools/paper_trader.py --order-flow NGPL
 python nepse_ai_trading/tools/paper_trader.py --dividend-forecast NGPL
 python nepse_ai_trading/tools/paper_trader.py --signal NGPL          # 🆕 Entry/exit timing
-python nepse_ai_trading/tools/paper_trader.py --price-target NGPL    # 🆕 Profit targets
+python nepse_ai_trading/tools/paper_trader.py --price-targets NGPL    # 🆕 Profit targets
 ```
 
 ### Portfolio Management
@@ -626,13 +626,13 @@ Total: 11/15 Features Implemented (Feasible subset)
 ## 💡 Pro Tips
 
 1. **Combine Features:** Use --smart-money + --sector-rotation to find where institutions are rotating
-2. **Daily Routine:** --positioning → --sector-rotation → --smart-money → --scan → 🆕 --signal → 🆕 --price-target
-3. **Deep Dive:** --analyze SYMBOL → --tech-score SYMBOL → --order-flow SYMBOL → 🆕 --signal SYMBOL → 🆕 --price-target SYMBOL
+2. **Daily Routine:** --positioning → --sector-rotation → --smart-money → --scan → 🆕 --signal → 🆕 --price-targets
+3. **Deep Dive:** --analyze SYMBOL → --tech-score SYMBOL → --order-flow SYMBOL → 🆕 --signal SYMBOL → 🆕 --price-targets SYMBOL
 4. **Risk Management:** --optimize-portfolio before large positions
 5. **Income Strategy:** --dividend-forecast for high-yield picks
 6. **🆕 Entry Timing:** Use --signal to identify optimal entry zones (BUY/SELL/HOLD)
-7. **🆕 Profit Taking:** Use --price-target to set realistic profit levels (Conservative/Moderate/Aggressive)
-8. **🆕 Complete Workflow:** --signal → If BUY → --price-target → Execute with targets
+7. **🆕 Profit Taking:** Use --price-targets to set realistic profit levels (Conservative/Moderate/Aggressive)
+8. **🆕 Complete Workflow:** --signal → If BUY → --price-targets → Execute with targets
 
 ---
 

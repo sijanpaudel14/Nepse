@@ -327,21 +327,25 @@ class ManipulationDetector:
                 continue
             
             # Calculate how "balanced" the broker's trading is
-            # If buy ≈ sell, they're likely just passing shares
+            # H1 FIX: Check net direction to avoid false positives
             min_qty = min(buy_qty, sell_qty)
             max_qty = max(buy_qty, sell_qty)
+            net_qty = buy_qty - sell_qty
             
             if max_qty == 0:
                 continue
                 
             balance_ratio = min_qty / max_qty
             
-            # If >60% balanced AND significant volume, likely circular
-            if balance_ratio > 0.60 and min_qty > 500:
+            # H1 FIX: Only flag if truly balanced (>75%) AND net close to zero
+            # A broker with buy=1000, sell=600 is accumulating (net +400), not circular
+            if balance_ratio > 0.75 and abs(net_qty) < min_qty * 0.2 and min_qty > 500:
+                # True circular - matched volume with minimal net direction
                 circular_brokers.append({
                     "broker": broker.broker_code or broker.broker_name,
                     "buy_qty": buy_qty,
                     "sell_qty": sell_qty,
+                    "net_qty": net_qty,
                     "balance_ratio": balance_ratio,
                     "circular_volume": min_qty  # Matching volume
                 })
@@ -517,11 +521,23 @@ class ManipulationDetector:
                     else:
                         result.distribution_score = min(100, abs(total_net / total_volume) * 100)
             
-            # PHASE CLASSIFICATION LOGIC
+            # PHASE CLASSIFICATION LOGIC (H3 FIX: Adaptive thresholds)
+            
+            # Calculate historical volatility for normalization
+            if len(df) >= 30 and 'close' in df.columns:
+                price_pct_changes = df['close'].pct_change().dropna()
+                historical_volatility = price_pct_changes.std() if len(price_pct_changes) > 0 else 0
+            else:
+                historical_volatility = 0
+            
+            # H3 FIX: Normalize thresholds based on volatility
+            # Higher volatility stocks need higher thresholds
+            normalized_price_threshold = 10 + (historical_volatility * 100)
+            normalized_volume_threshold = 1.5 + (historical_volatility / 2)
             
             # PHASE 3: DISTRIBUTION (Most dangerous)
-            if (result.volume_ratio_30d > 1.5 and 
-                result.price_change_30d > 10 and 
+            if (result.volume_ratio_30d > normalized_volume_threshold and 
+                result.price_change_30d > normalized_price_threshold and 
                 price_change_7d < 2 and  # Price stalling after pump
                 result.distribution_score > 30):
                 result.phase = PumpDumpPhase.DISTRIBUTION
@@ -538,8 +554,8 @@ class ManipulationDetector:
                 result.description = f"⚠️ PUMP PHASE: Volume {result.volume_ratio_30d:.1f}x, Price +{result.price_change_30d:.0f}% - Late entry risk"
                 
             # PHASE 1: ACCUMULATION (Operator entry - follow if confident)
-            elif (result.volume_ratio_30d < 1.5 and 
-                  abs(result.price_change_30d) < 10 and
+            elif (result.volume_ratio_30d < normalized_volume_threshold and 
+                  abs(result.price_change_30d) < normalized_price_threshold and
                   result.accumulation_score > 40):
                 result.phase = PumpDumpPhase.ACCUMULATION
                 result.severity = ManipulationSeverity.LOW

@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     # DP charge (per transaction)
     dp_charge: float = 25.0  # Rs. 25 per transaction
     
+    # Total transaction costs (used for position closing calculations)
+    total_transaction_cost_pct: float = 0.00415  # 0.4% broker + 0.015% SEBON
+    
+    # Maximum risk per trade as percentage (for portfolio manager)
+    max_risk_per_trade_pct: float = 2.0  # 2% maximum risk per trade
+    
     # ============ TECHNICAL ANALYSIS DEFAULTS ============
     # EMA periods for trend detection
     ema_short: int = 9
@@ -101,6 +107,18 @@ class Settings(BaseSettings):
     volume_avg_period: int = 20
     # Days of historical data to fetch
     lookback_days: int = 60
+    
+    # ============ SECTOR-SPECIFIC MOMENTUM (TRADING DAYS) ============
+    # Different sectors have different momentum characteristics in NEPSE
+    # Note: These are TRADING DAYS (excluding Friday/Saturday holidays)
+    momentum_hydro: int = 7           # Fast operator-driven pumps
+    momentum_banking: int = 14        # Macro trend followers
+    momentum_microfinance: int = 10   # Credit cycle dependent
+    momentum_dev_bank: int = 12       # Medium-term institutional
+    momentum_finance: int = 10        # Similar to microfinance
+    momentum_insurance: int = 14      # Long macro trends
+    momentum_manufacturing: int = 21  # Fundamental-driven (slowest)
+    momentum_default: int = 10        # Default for other sectors
     
     # ============ API SETTINGS ============
     jwt_secret_key: str = "change-this-in-production"

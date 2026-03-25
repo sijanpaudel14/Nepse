@@ -251,8 +251,20 @@ def fill_missing_dates(
     # Reindex to include all trading days
     df = df.reindex(trading_days)
     
-    # Forward fill missing values
-    df = df.ffill()
+    # Forward fill missing values with a LIMIT
+    # CRITICAL: Only fill short gaps (holidays, max 5 consecutive days for NEPSE)
+    # Longer gaps indicate data collection failures, not holidays
+    MAX_HOLIDAY_GAP = 5  # Max consecutive NEPSE holidays (e.g., Dashain/Tihar)
+    df = df.ffill(limit=MAX_HOLIDAY_GAP)
+    
+    # Check for remaining NaN (data quality issues beyond holiday gaps)
+    remaining_nan = df.isna().any(axis=1).sum()
+    if remaining_nan > 0:
+        logger.warning(
+            f"⚠️ DATA QUALITY ISSUE: {symbol} has {remaining_nan} rows with missing data "
+            f"beyond {MAX_HOLIDAY_GAP}-day forward fill limit. This indicates API/data gaps, "
+            f"not holidays. These rows will have NaN values."
+        )
     
     # Reset index
     df = df.reset_index()

@@ -225,49 +225,105 @@ class TechnicalCompositeScorer:
     
     def _calculate_rsi_score(self, df: pd.DataFrame, period: int = 14) -> Tuple[float, float]:
         """
-        Calculate RSI score.
+        Calculate RSI score using WILDER'S SMOOTHING method (not SMA).
+        
+        BULLETPROOF IMPLEMENTATION:
+        - Validates all inputs
+        - Handles all edge cases (NaN, zero, insufficient data)
+        - Uses exact Wilder's smoothing formula
+        - Returns valid defaults on any failure
+        
+        Wilder's smoothing uses alpha = 1/period, which is different from
+        standard EMA alpha = 2/(period+1). This is the industry-standard
+        RSI calculation used by professional trading platforms.
         
         Returns:
-            Tuple of (rsi_value, score)
+            Tuple of (rsi_value, score) - Always returns valid floats
         """
-        if len(df) < period + 1:
+        # VALIDATION: Strict data requirements
+        if df is None or df.empty:
+            logger.debug("RSI: DataFrame is None or empty")
             return 50.0, 50.0
         
+        if 'close' not in df.columns:
+            logger.debug("RSI: 'close' column missing")
+            return 50.0, 50.0
+        
+        if len(df) < period + 1:
+            logger.debug(f"RSI: Insufficient data ({len(df)}/{period + 1} required)")
+            return 50.0, 50.0
+        
+        # Validate period
+        if period < 2:
+            logger.warning("RSI: Period must be >= 2, using 14")
+            period = 14
+        
         try:
-            delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            close = df['close'].dropna()
             
-            rs = gain / loss.replace(0, 0.0001)
-            rsi = 100 - (100 / (1 + rs))
-            rsi_value = rsi.iloc[-1]
+            # VALIDATION: Need enough non-NaN values
+            if len(close) < period + 1:
+                logger.debug(f"RSI: Insufficient non-NaN close values")
+                return 50.0, 50.0
             
-            # Score RSI
-            # Optimal: 40-60 (neutral)
-            # Bullish: 50-70
-            # Bearish: 30-50
-            # Overbought: >70 (penalty)
-            # Oversold: <30 (opportunity)
+            delta = close.diff()
             
-            if 50 <= rsi_value <= 65:
-                score = 80  # Ideal bullish momentum
-            elif 40 <= rsi_value < 50:
-                score = 60  # Neutral
-            elif 65 < rsi_value <= 70:
-                score = 65  # Getting overbought
-            elif 30 <= rsi_value < 40:
-                score = 55  # Oversold but not extreme
-            elif rsi_value > 70:
-                score = 40  # Overbought
-            elif rsi_value < 30:
-                score = 70  # Oversold opportunity
+            # Separate gains and losses
+            gains = delta.where(delta > 0, 0.0)
+            losses = (-delta).where(delta < 0, 0.0)
+            
+            # WILDER'S SMOOTHING: alpha = 1/period (NOT 2/(period+1))
+            # Mathematical equivalence: EMA with span = 2*period - 1
+            wilder_alpha = 1.0 / period
+            
+            avg_gain = gains.ewm(alpha=wilder_alpha, min_periods=period, adjust=False).mean()
+            avg_loss = losses.ewm(alpha=wilder_alpha, min_periods=period, adjust=False).mean()
+            
+            # Get latest values
+            last_avg_gain = float(avg_gain.iloc[-1])
+            last_avg_loss = float(avg_loss.iloc[-1])
+            
+            # VALIDATION: Handle NaN
+            if pd.isna(last_avg_gain) or pd.isna(last_avg_loss):
+                logger.debug("RSI: Average gain/loss is NaN")
+                return 50.0, 50.0
+            
+            # VALIDATION: Handle zero loss (all gains = RSI 100)
+            if last_avg_loss == 0:
+                if last_avg_gain == 0:
+                    rsi_value = 50.0  # No movement
+                else:
+                    rsi_value = 100.0  # All gains, no losses
             else:
-                score = 50
+                rs = last_avg_gain / last_avg_loss
+                rsi_value = 100.0 - (100.0 / (1.0 + rs))
             
-            return rsi_value, score
+            # VALIDATION: Clamp RSI to valid range [0, 100]
+            rsi_value = max(0.0, min(100.0, rsi_value))
             
+            # Score RSI (optimized for NEPSE swing trading)
+            if 50 <= rsi_value <= 65:
+                score = 80.0  # Ideal bullish momentum
+            elif 40 <= rsi_value < 50:
+                score = 60.0  # Neutral, potential reversal
+            elif 65 < rsi_value <= 70:
+                score = 65.0  # Getting overbought, caution
+            elif 30 <= rsi_value < 40:
+                score = 55.0  # Oversold but not extreme
+            elif rsi_value > 70:
+                score = 40.0  # Overbought - avoid buying
+            elif rsi_value < 30:
+                score = 70.0  # Oversold - potential bounce opportunity
+            else:
+                score = 50.0
+            
+            return float(rsi_value), float(score)
+            
+        except (ValueError, TypeError, ZeroDivisionError) as e:
+            logger.debug(f"RSI calculation error: {e}")
+            return 50.0, 50.0
         except Exception as e:
-            logger.debug(f"RSI calc failed: {e}")
+            logger.warning(f"RSI unexpected error: {e}")
             return 50.0, 50.0
     
     def _calculate_macd_score(self, df: pd.DataFrame) -> Tuple[float, float]:

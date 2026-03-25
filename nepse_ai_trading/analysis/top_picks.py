@@ -581,10 +581,11 @@ class TopPicksAnalyzer:
             pick.broker_score * self.WEIGHT_BROKER
         )
         
-        # Calculate trading targets
+        # Calculate trading targets with ATR-based stops
         pick.entry_price = pick.ltp
-        pick.target_price = pick.ltp * 1.10  # 10% target
-        pick.stop_loss = pick.ltp * 0.95  # 5% stop loss
+        stop, target = self._calculate_atr_based_trade_plan(symbol, pick.ltp)
+        pick.target_price = target
+        pick.stop_loss = stop
         
         # Risk/Reward ratio
         potential_gain = pick.target_price - pick.entry_price
@@ -593,6 +594,51 @@ class TopPicksAnalyzer:
             pick.risk_reward_ratio = potential_gain / potential_loss
         
         return pick
+    
+    def _calculate_atr_based_trade_plan(self, symbol: str, ltp: float) -> Tuple[float, float]:
+        """
+        Calculate ATR-based stop loss and target price.
+        
+        CRITICAL: Uses actual volatility instead of arbitrary percentages.
+        NEPSE-OPTIMIZED: 2.5x ATR for stop (accounts for higher volatility).
+        
+        Returns:
+            Tuple of (stop_loss, target_price)
+        """
+        try:
+            import pandas_ta as ta
+            
+            # Fetch price history for ATR calculation
+            df = self.fetcher.fetch_price_history(symbol, days=30)
+            
+            if df is not None and len(df) >= 14:
+                # Calculate 14-period ATR
+                atr_series = ta.atr(df['high'], df['low'], df['close'], length=14)
+                
+                if atr_series is not None and len(atr_series) > 0:
+                    atr = float(atr_series.iloc[-1])
+                    
+                    if atr > 0 and not pd.isna(atr):
+                        # ATR-based stop: 2.5x ATR below entry (NEPSE volatility)
+                        stop = round(ltp - (2.5 * atr), 2)
+                        
+                        # Target: Maintain 1:2 R:R minimum
+                        risk = ltp - stop
+                        target = round(ltp + (2.0 * risk), 2)
+                        
+                        logger.debug(
+                            f"{symbol}: ATR={atr:.2f}, Stop={stop:.2f}, Target={target:.2f}"
+                        )
+                        return stop, target
+        except Exception as e:
+            logger.debug(f"{symbol}: ATR calculation failed: {e}")
+        
+        # Fallback: Use volatility estimate from price range if ATR unavailable
+        estimated_atr = ltp * 0.03  # Assume ~3% daily range (conservative NEPSE estimate)
+        stop = round(ltp - (2.5 * estimated_atr), 2)
+        target = round(ltp * 1.10, 2)  # 10% target as fallback
+        logger.debug(f"{symbol}: Using estimated ATR fallback: Stop={stop}, Target={target}")
+        return stop, target
     
     def _calculate_technical_score(self, symbol: str) -> Tuple[float, str]:
         """

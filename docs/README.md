@@ -84,7 +84,7 @@ Historical documentation and session notes:
 2. [Command Reference Card](features/COMMAND_REFERENCE_CARD.md) - `--signal` command
 
 #### 💹 Calculate Price Targets 🆕
-1. [Command Reference Card](features/COMMAND_REFERENCE_CARD.md) - `--price-target` command
+1. [Command Reference Card](features/COMMAND_REFERENCE_CARD.md) - `--price-targets` command
 2. [Technical Signal Engine v2.0](features/TECHNICAL_SIGNAL_ENGINE_V2.md)
 
 #### 🔔 Set Up Alerts
@@ -161,7 +161,17 @@ Day 6-7: Combine all features in daily workflow
 --tech-score SYMBOL     # Multi-timeframe technical score
 --order-flow SYMBOL     # Buy/sell pressure analysis
 --signal SYMBOL         # Entry/exit timing with Wyckoff phases 🆕
---price-target SYMBOL   # Multi-level price targets 🆕
+--price-targets SYMBOL   # Multi-level price targets 🆕
+--calendar              # Daily top picks calendar (next 30 days) 🆕
+--calendar-days 30      # Lookahead window (default 30)
+--calendar-max-stocks 0 # 0=all stocks (default), N=cap universe
+```
+
+### Calendar Filters (also works with `--calendar`)
+```bash
+--sector=all|hydro|bank|finance|...
+--max-price=600
+--quick                 # fast mode
 ```
 
 ### Portfolio
@@ -319,7 +329,7 @@ docs/
    - `--scan` (momentum screening)
    - `--analyze SYMBOL` (stock deep dive)
    - `--signal SYMBOL` (entry/exit timing) 🆕
-   - `--price-target SYMBOL` (profit targets) 🆕
+   - `--price-targets SYMBOL` (profit targets) 🆕
    - `--broker-intelligence --sector=hydro` (operator detection)
 
 ---

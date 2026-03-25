@@ -60,12 +60,15 @@ class NepseFetcher:
         
         logger.info("NepseFetcher initialized with official NepseUnofficialApi")
     
-    def fetch_company_list(self) -> List[StockData]:
+    def fetch_company_list(self, active_only: bool = True) -> List[StockData]:
         """
         Fetch list of all NEPSE-listed companies.
         
+        Args:
+            active_only: If True, filter out delisted/suspended/inactive stocks
+        
         Returns:
-            List of StockData objects
+            List of StockData objects (actively trading stocks only by default)
         """
         logger.info("Fetching company list from NEPSE...")
         
@@ -73,14 +76,47 @@ class NepseFetcher:
             companies = self.nepse.getCompanyList()
             
             stocks = []
+            filtered_count = 0
+            
             for company in companies:
                 try:
+                    # === FILTER INACTIVE STOCKS ===
+                    # NEPSE API includes delisted, suspended, and merged companies
+                    # Filter them out to avoid wasting API calls and analysis time
+                    
+                    status = company.get("activeStatus", company.get("status", "")).upper()
+                    security_name = company.get("securityName", company.get("companyName", "")).upper()
+                    symbol = company.get("symbol", "")
+                    
+                    if active_only:
+                        # Skip if explicitly marked inactive/delisted
+                        if status in ["D", "DELISTED", "SUSPENDED", "INACTIVE", "HALT", "HALTED", "MERGED"]:
+                            filtered_count += 1
+                            logger.debug(f"Filtered: {symbol} - Status: {status}")
+                            continue
+                        
+                        # Skip if name contains delisting indicators  
+                        if any(keyword in security_name for keyword in ["DELISTED", "MERGED", "ACQUIRED", "SUSPENDED"]):
+                            filtered_count += 1
+                            logger.debug(f"Filtered: {symbol} - Name indicates delisting: {security_name}")
+                            continue
+                        
+                        # Skip symbols that are clearly not stocks (bonds, funds, etc.)
+                        # NEPSE uses specific prefixes for non-equity securities
+                        if any(symbol.startswith(prefix) for prefix in ["NRB", "GOV", "BOND"]):
+                            filtered_count += 1
+                            logger.debug(f"Filtered: {symbol} - Non-equity security")
+                            continue
+                    
+                    # Parse market cap (may be None for newly listed)
+                    market_cap = parse_nepse_number(company.get("marketCapitalization"))
+                    
                     stock = StockData(
-                        symbol=company.get("symbol", ""),
+                        symbol=symbol,
                         name=company.get("securityName", company.get("companyName", "")),
                         sector=company.get("sectorName", ""),
                         listed_shares=parse_nepse_number(company.get("listedShares")),
-                        market_cap=parse_nepse_number(company.get("marketCapitalization")),
+                        market_cap=market_cap if market_cap and market_cap > 0 else None,
                     )
                     if stock.symbol:
                         stocks.append(stock)
@@ -88,7 +124,9 @@ class NepseFetcher:
                     logger.debug(f"Failed to parse company: {e}")
                     continue
             
-            logger.info(f"Fetched {len(stocks)} companies from NEPSE")
+            if filtered_count > 0:
+                logger.info(f"Filtered out {filtered_count} inactive/delisted stocks")
+            logger.info(f"Fetched {len(stocks)} active trading companies from NEPSE")
             return stocks
             
         except Exception as e:

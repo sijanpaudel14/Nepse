@@ -99,7 +99,7 @@ nohup python nepse_ai_trading/tools/auto_market_logger.py --daemon \
 ps aux | grep auto_market_logger
 
 # Stop it later
-pkill -f auto_market_logger
+kill <PID>
 ```
 **Checks:** Every 30 min during market hours  
 **Auto-stops:** When market closed
@@ -165,7 +165,7 @@ python nepse_ai_trading/tools/paper_trader.py --signal NGPL
 
 ### 2️⃣ Get Price Targets for a Stock
 ```bash
-python nepse_ai_trading/tools/paper_trader.py --price-target NGPL
+python nepse_ai_trading/tools/paper_trader.py --price-targets NGPL
 ```
 
 **What it shows:**
@@ -201,7 +201,7 @@ python nepse_ai_trading/tools/paper_trader.py --positioning
 python nepse_ai_trading/tools/paper_trader.py --signal NGPL
 
 # Step 3: Get price targets
-python nepse_ai_trading/tools/paper_trader.py --price-target NGPL
+python nepse_ai_trading/tools/paper_trader.py --price-targets NGPL
 
 # Step 4: Deep analysis if needed
 python nepse_ai_trading/tools/paper_trader.py --analyze NGPL

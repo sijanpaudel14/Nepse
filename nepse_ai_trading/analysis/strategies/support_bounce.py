@@ -183,11 +183,16 @@ class SupportBounceStrategy(BaseStrategy):
         if volume_ok:
             reasons.append("Volume confirmation")
         
-        entry = price
-        # Support bounce targets resistance
-        target = round(entry * 1.08, 2)  # Conservative 8% target
-        # Stop just below support
+        # Add slippage buffer to entry price for realistic NEPSE execution
+        entry = price * (1 + settings.slippage_pct)
+        # Calculate ATR-based target, but stop below support (structure-based)
+        _, atr_target = self._calculate_atr_based_levels(df, entry, stop_multiplier=2.5, rr_ratio=1.5)
+        
+        # Support bounce: stop just below support level (structure-based)
         stop = round(nearest_support * 0.98, 2)
+        
+        # Target: use ATR-based or 8% gain, whichever is more conservative
+        target = min(atr_target, round(entry * 1.08, 2))
         
         signal = StrategySignal(
             symbol=symbol,

@@ -61,6 +61,8 @@ from analysis.master_screener import MasterStockScreener, get_best_stocks, Scree
 from analysis.indicators import safe_rsi, safe_vwap
 from data.fetcher import NepseFetcher
 from data.sharehub_api import get_price_history_with_open
+from risk.position_sizer import PositionSizer
+from core.config import settings
 
 
 # Database configuration
@@ -146,10 +148,16 @@ class PortfolioManager:
     TARGET_PCT = 0.10  # +10% profit target
     STOP_LOSS_PCT = 0.05  # -5% stop loss
     
-    def __init__(self, portfolio_path: str = PORTFOLIO_PATH):
+    def __init__(self, portfolio_path: str = PORTFOLIO_PATH, total_capital: float = 100000):
         self.portfolio_path = portfolio_path
         self.holdings: List[PortfolioHolding] = []
         self.watchlist: List[str] = []
+        self.total_capital = total_capital
+        # H7 FIX: Initialize PositionSizer for risk validation
+        self.sizer = PositionSizer(
+            portfolio_value=total_capital,
+            max_risk_per_trade=0.02,  # 2% hard limit
+        )
         self._load()
     
     def _load(self):
@@ -203,9 +211,11 @@ class PortfolioManager:
             return False
         return True
     
-    def add_position(self, symbol: str, buy_price: float, allocation: float = None, quantity: int = 0) -> bool:
+    def add_position(self, symbol: str, buy_price: float, allocation: float = None, quantity: int = 0, stop_loss: float = None) -> bool:
         """
         Add a new position to portfolio.
+        
+        H7 FIX: Now validates risk with PositionSizer if stop_loss provided.
         
         Returns True if added, False if portfolio full.
         """
@@ -221,6 +231,26 @@ class PortfolioManager:
             logger.warning(f"Portfolio full ({self.total_allocation*100:.1f}% allocated)")
             self.add_to_watchlist(symbol)
             return False
+        
+        # H7 FIX: Validate risk if stop loss provided
+        if stop_loss and stop_loss > 0 and stop_loss < buy_price:
+            position = self.sizer.calculate(
+                symbol=symbol,
+                entry_price=buy_price,
+                stop_loss=stop_loss,
+                target_price=buy_price * (1 + self.TARGET_PCT),  # 10% target
+            )
+            
+            if not position.is_valid():
+                logger.warning(
+                    f"⚠️ {symbol}: Risk {position.risk_percent:.2f}% exceeds 2% limit. "
+                    f"Position rejected for safety."
+                )
+                return False
+            
+            # Use risk-sized quantity if not provided
+            if quantity == 0:
+                quantity = position.shares
         
         holding = PortfolioHolding(
             symbol=symbol,
@@ -251,7 +281,8 @@ class PortfolioManager:
         symbol = symbol.upper()
         for i, h in enumerate(self.holdings):
             if h.symbol == symbol:
-                pnl = ((exit_price / h.buy_price) - 1) * 100 if exit_price else 0
+                # Division guard for buy_price
+                pnl = ((exit_price / max(h.buy_price, 0.001)) - 1) * 100 if exit_price and h.buy_price > 0 else 0
                 logger.info(f"🔴 Sold {symbol} @ Rs.{exit_price:.2f} | P&L: {pnl:+.1f}% | Reason: {reason}")
                 self.holdings.pop(i)
                 self._save()
@@ -565,7 +596,8 @@ def classify_stock_risk(stock, screener=None) -> dict:
             logger.warning(f"VWAP fetch failed for {stock.symbol}: {e}")
 
     if vwap_available and current_price > 0:
-        vwap_premium_pct = ((current_price / vwap_14d) - 1) * 100
+        # Division guard for vwap_14d
+        vwap_premium_pct = ((current_price / max(vwap_14d, 0.001)) - 1) * 100 if vwap_14d > 0 else 0
         if vwap_premium_pct > 10:
             risk_reasons.append(f"Price overextended vs 14D VWAP (+{vwap_premium_pct:.1f}%)")
     elif not vwap_available:
@@ -3520,13 +3552,14 @@ def main():
     parser.add_argument(
     "--sector",
     type=str,
-    default=None,
+    default="all",
     choices=[
+        "all",
         "bank", "devbank", "finance", "microfinance", 
         "hydro", "life_insurance", "non_life_insurance", 
         "hotel", "manufacturing", "trading", "investment", "others"
     ],
-    help="Filter scan by a specific NEPSE sector (e.g., 'hydro', 'finance')."
+    help="Filter by NEPSE sector (default: all)."
     )
     
     # Budget filter
@@ -3660,6 +3693,12 @@ def main():
         default=30,
         help="Number of days to look ahead for --calendar (default: 30)"
     )
+    parser.add_argument(
+        "--calendar-max-stocks",
+        type=int,
+        default=0,
+        help="Max stocks to analyze for --calendar (0 = all stocks, default: 0)"
+    )
 
     args = parser.parse_args()
 
@@ -3676,6 +3715,10 @@ def main():
     if args.analyze:
         args.action = "analyze"
         args.stock = args.analyze
+
+    # Normalize "all" sector to no filter for existing workflows
+    if args.sector == "all":
+        args.sector = None
 
     def _resolve_current_price(fetcher, symbol: str) -> float:
         """
@@ -3976,20 +4019,63 @@ def main():
             except:
                 continue
         
-        # Sort by turnover (most active first) and limit
+        # Sort by turnover (active first) for processing order only
         active_stocks.sort(key=lambda x: x['turnover'], reverse=True)
         
-        # Use --quick to analyze fewer stocks
-        max_stocks = 30 if args.quick else 100
-        active_stocks = active_stocks[:max_stocks]
+        # Coverage policy:
+        # - Default: analyze ALL stocks (captures bottom-reversal candidates too)
+        # - --quick: fast mode with limited universe
+        # - --calendar-max-stocks N: explicit cap override
+        if args.calendar_max_stocks and args.calendar_max_stocks > 0:
+            max_stocks = args.calendar_max_stocks
+            active_stocks = active_stocks[:max_stocks]
+        elif args.quick:
+            max_stocks = 30
+            active_stocks = active_stocks[:max_stocks]
+        else:
+            max_stocks = len(active_stocks)  # all stocks
         
         est_time = len(active_stocks) * 1.5
-        print(f"📈 Analyzing top {len(active_stocks)} stocks{'(quick mode)' if args.quick else ''}...")
+        mode_label = " (quick mode)" if args.quick else " (full market mode)"
+        print(f"📈 Analyzing {len(active_stocks)} stocks{mode_label}...")
         print(f"⏳ Estimated time: {est_time // 60:.0f}m {est_time % 60:.0f}s")
         print()
         
-        # Store results by entry week
-        calendar_data = {}  # {week_key: [stock_entries]}
+        # Sector alias map for calendar filtering
+        sector_alias = {
+            "bank": "commercial bank",
+            "devbank": "development bank",
+            "finance": "finance",
+            "microfinance": "microfinance",
+            "hydro": "hydro",
+            "life_insurance": "life insurance",
+            "non_life_insurance": "non life insurance",
+            "hotel": "hotel",
+            "manufacturing": "manufacturing",
+            "trading": "trading",
+            "investment": "investment",
+            "others": "other",
+        }
+        target_sector = args.sector
+        symbol_sector_map = {}
+        if target_sector:
+            try:
+                company_list = fetcher.fetch_company_list()
+                if isinstance(company_list, list):
+                    for c in company_list:
+                        if isinstance(c, dict):
+                            sym = str(c.get("symbol", "")).upper().strip()
+                            sec = str(c.get("sector", "")).lower().strip()
+                        else:
+                            sym = str(getattr(c, "symbol", "")).upper().strip()
+                            sec = str(getattr(c, "sector", "")).lower().strip()
+                        if sym:
+                            symbol_sector_map[sym] = sec
+            except Exception as e:
+                logger.debug(f"Calendar sector mapping unavailable: {e}")
+
+        # Store per-stock candidates, then rank per day over the full range
+        candidate_entries = []
         today = date.today()
         calendar_days = args.calendar_days
         
@@ -4005,32 +4091,32 @@ def main():
             print(f"\r   [{bar}] {idx}/{total} Analyzing {symbol:<8}", end="", flush=True)
             
             try:
-                # Generate signal (this is the actual analysis)
-                signal = engine.generate_signal(symbol, current_price=price)
+                # Optional sector filter
+                if target_sector:
+                    symbol_sector = symbol_sector_map.get(symbol.upper(), "")
+                    sector_key = sector_alias.get(target_sector, target_sector).lower()
+                    if sector_key and sector_key not in symbol_sector:
+                        continue
+
+                # Get stock sector for momentum calculation
+                stock_sector = symbol_sector_map.get(symbol.upper(), "")
+                
+                # Generate signal with sector-aware momentum
+                signal = engine.generate_signal(symbol, current_price=price, sector=stock_sector)
                 
                 # Only include stocks with entry opportunity in next N days
                 if signal.estimated_entry_date and signal.days_until_entry <= calendar_days:
                     entry_date = signal.estimated_entry_date
-                    
-                    # Calculate week number from today
                     days_away = (entry_date - today).days
-                    if days_away < 0:
-                        week_key = "TODAY"
-                    elif days_away <= 7:
-                        week_key = "WEEK 1 (Next 7 days)"
-                    elif days_away <= 14:
-                        week_key = "WEEK 2 (8-14 days)"
-                    elif days_away <= 21:
-                        week_key = "WEEK 3 (15-21 days)"
-                    else:
-                        week_key = "WEEK 4+ (22-30 days)"
-                    
-                    if week_key not in calendar_data:
-                        calendar_data[week_key] = []
-                    
-                    # Store entry info
+
+                    # Apply affordability filter if requested
+                    if args.max_price is not None and signal.entry_zone_low > args.max_price:
+                        continue
+
+                    # Store candidate info
                     t1_pct = (signal.target_1 / signal.entry_zone_low - 1) * 100 if signal.entry_zone_low > 0 else 0
-                    calendar_data[week_key].append({
+                    score = (signal.entry_probability * 0.55) + (signal.t1_probability * 0.25) + (min(15, max(0, t1_pct)) * 1.5)
+                    candidate_entries.append({
                         'symbol': symbol,
                         'entry_date': entry_date,
                         'entry_price': signal.entry_zone_low,
@@ -4043,6 +4129,7 @@ def main():
                         'days_away': days_away,
                         'signal_type': signal.signal_type.value,
                         'trend_phase': signal.trend_phase.value,
+                        'score': score,
                     })
                 
                 # Small delay for rate limiting
@@ -4052,40 +4139,67 @@ def main():
                 logger.debug(f"Error analyzing {symbol}: {e}")
                 continue
         
+        # Build daily calendar for EVERY day in range (no gaps)
+        calendar_data = {}
+        for d in range(calendar_days + 1):
+            day = today + timedelta(days=d)
+            date_key = day.strftime("%Y-%m-%d")
+            day_entries = []
+            for c in candidate_entries:
+                # Distance penalty: prioritize stocks whose expected entry is near this day
+                dist = abs((c["entry_date"] - day).days)
+                # Strongly favor near-date entries; avoid long-distance carryover noise
+                daily_score = c["score"] - (dist * 6.0)
+                # Eligibility by distance window (tighter when range is short)
+                max_dist = 2 if calendar_days <= 7 else 3
+                # Only include if relevant for this day
+                if dist <= max_dist and daily_score >= 20:
+                    e = dict(c)
+                    e["daily_score"] = daily_score
+                    day_entries.append(e)
+            day_entries.sort(key=lambda x: (-x["daily_score"], -x["entry_prob"], -x["t1_pct"]))
+            calendar_data[date_key] = day_entries[:5]
+
         print("\n\n" + "=" * 70)
-        print("📅 TRADE CALENDAR - Next 30 Days Entry Opportunities")
+        sector_label = f" | Sector: {target_sector.upper()}" if target_sector else ""
+        price_label = f" | Max Price: Rs.{args.max_price:.0f}" if args.max_price is not None else ""
+        print(f"📅 TRADE CALENDAR - Daily Top Picks (Next {calendar_days} Days){sector_label}{price_label}")
         print("=" * 70)
-        
-        # Sort each week by entry probability (highest first)
-        week_order = ["TODAY", "WEEK 1 (Next 7 days)", "WEEK 2 (8-14 days)", 
-                      "WEEK 3 (15-21 days)", "WEEK 4+ (22-30 days)"]
-        
+
         total_opportunities = 0
-        for week_key in week_order:
-            if week_key in calendar_data:
-                entries = calendar_data[week_key]
-                # Sort by entry probability
-                entries.sort(key=lambda x: (-x['entry_prob'], -x['t1_pct']))
-                
-                print(f"\n🗓️ {week_key}")
-                print("-" * 65)
-                print(f"   {'Stock':<8} {'Entry Date':<12} {'Entry @':<10} {'Target':<12} {'Prob':<6} {'Phase'}")
-                print("-" * 65)
-                
-                for entry in entries[:10]:  # Top 10 per week
+        sorted_dates = sorted(calendar_data.keys())
+        for date_key in sorted_dates:
+            top_entries = calendar_data[date_key]
+
+            print(f"\n🗓️ {date_key}")
+            print("-" * 80)
+            print(f"   {'Rank':<5} {'Stock':<8} {'Entry@':<9} {'T1':<14} {'EntryProb':<10} {'T1Prob':<8} {'Score'}")
+            print("-" * 80)
+            if not top_entries:
+                print("   (No suitable picks for this day under current filters)")
+            else:
+                for i, entry in enumerate(top_entries, 1):
                     total_opportunities += 1
-                    entry_str = entry['entry_date'].strftime('%Y-%m-%d')
-                    target_str = f"Rs.{entry['t1_price']:.0f} (+{entry['t1_pct']:.0f}%)"
-                    print(f"   {entry['symbol']:<8} {entry_str:<12} Rs.{entry['entry_price']:<7.0f} {target_str:<12} {entry['entry_prob']:.0f}%    {entry['trend_phase']}")
-        
+                    t1_txt = f"Rs.{entry['t1_price']:.0f} (+{entry['t1_pct']:.0f}%)"
+                    print(f"   #{i:<4} {entry['symbol']:<8} Rs.{entry['entry_price']:<6.0f} {t1_txt:<14} {entry['entry_prob']:.0f}%{'':<6} {entry['t1_prob']:.0f}%{'':<3} {entry['daily_score']:.1f}")
+
         print("\n" + "=" * 70)
-        print(f"📊 SUMMARY: {total_opportunities} entry opportunities found in next {calendar_days} days")
+        print(f"📊 SUMMARY: {total_opportunities} picks (max 5/day) in next {calendar_days} days")
         print("=" * 70)
         
-        # Quick picks for immediate action
-        immediate = calendar_data.get("TODAY", []) + calendar_data.get("WEEK 1 (Next 7 days)", [])
+        # Quick picks for immediate action (today + next 2 days)
+        immediate = []
+        for d in sorted_dates[:3]:
+            immediate.extend(calendar_data.get(d, []))
         if immediate:
-            immediate.sort(key=lambda x: (-x['entry_prob'], -x['t1_pct']))
+            # Deduplicate symbols across first 3 days
+            best_by_symbol = {}
+            for e in immediate:
+                sym = e["symbol"]
+                if sym not in best_by_symbol or e["daily_score"] > best_by_symbol[sym]["daily_score"]:
+                    best_by_symbol[sym] = e
+            immediate = list(best_by_symbol.values())
+            immediate.sort(key=lambda x: (-x['daily_score'], -x['entry_prob'], -x['t1_pct']))
             print("\n🔥 TOP IMMEDIATE PICKS (This Week):")
             print("-" * 50)
             for i, entry in enumerate(immediate[:5], 1):
@@ -4111,9 +4225,17 @@ def main():
         
         current_price = _resolve_current_price(fetcher, symbol)
         
-        # Generate signal
+        # Get sector for momentum calculation
+        companies = fetcher.fetch_company_list(active_only=True)
+        stock_sector = ""
+        for company in companies:
+            if company.symbol.upper() == symbol:
+                stock_sector = company.sector
+                break
+        
+        # Generate signal with sector-aware momentum
         engine = TechnicalSignalEngine(fetcher=fetcher, sharehub=sharehub)
-        signal = engine.generate_signal(symbol, current_price=current_price)
+        signal = engine.generate_signal(symbol, current_price=current_price, sector=stock_sector)
         
         # Print formatted report
         report = engine.format_signal_report(signal)

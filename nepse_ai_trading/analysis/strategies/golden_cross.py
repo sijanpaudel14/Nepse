@@ -181,10 +181,11 @@ class GoldenCrossStrategy(BaseStrategy):
         if adx_ok:
             reasons.append(f"Strong trend (ADX {adx:.1f})")
         
-        # Calculate target and stop loss
-        entry = price
-        target = round(entry * (1 + settings.target_profit), 2)
-        stop = round(entry * (1 - settings.stop_loss), 2)
+        # Calculate ATR-based stop loss and target
+        # CRITICAL: Do NOT use hardcoded percentages - use actual volatility
+        # Add slippage buffer to entry price for realistic NEPSE execution
+        entry = price * (1 + settings.slippage_pct)
+        stop, target = self._calculate_atr_based_levels(df, entry)
         
         signal = StrategySignal(
             symbol=symbol,

@@ -22,7 +22,7 @@ NEPSE-SPECIFIC:
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Tuple
 from datetime import date, datetime, timedelta
 from enum import Enum
 from loguru import logger
@@ -102,17 +102,21 @@ class Position:
     
     @property
     def hit_stop_loss(self) -> bool:
-        """Has price hit stop loss?"""
+        """Has price hit stop loss? (H4 FIX: with exit slippage buffer)"""
         if self.stop_loss <= 0 or self.current_price <= 0:
             return False
-        return self.current_price <= self.stop_loss
+        # Apply selling slippage - you get worse price (lower) than stop
+        adjusted_stop = self.stop_loss * (1 - settings.slippage_pct)
+        return self.current_price <= adjusted_stop
     
     @property
     def hit_target(self) -> bool:
-        """Has price hit target?"""
+        """Has price hit target? (H4 FIX: with exit slippage buffer)"""
         if self.target_price <= 0 or self.current_price <= 0:
             return False
-        return self.current_price >= self.target_price
+        # Apply selling slippage - you get worse price than target
+        adjusted_target = self.target_price * (1 - settings.slippage_pct)
+        return self.current_price >= adjusted_target
     
     def update_price(self, price: float):
         """Update current price."""

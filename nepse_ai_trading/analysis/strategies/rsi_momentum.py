@@ -57,8 +57,10 @@ class RSIMomentumStrategy(BaseStrategy):
                 self.params[key] = value
     
     def _find_local_lows(self, series: pd.Series, window: int = 5) -> pd.Series:
-        """Find local minima in a series."""
-        return series == series.rolling(window=2*window+1, center=True).min()
+        """Find local minima in a series (backward-looking only to avoid lookahead bias)."""
+        # Use only historical data: check if value equals minimum of past 'window' bars
+        shifted = series.shift(1)
+        return shifted == shifted.rolling(window=window, min_periods=1).min()
     
     def analyze(self, df: pd.DataFrame, symbol: str) -> Optional[StrategySignal]:
         """
@@ -156,10 +158,10 @@ class RSIMomentumStrategy(BaseStrategy):
             f"RSI recovering at {rsi:.1f}",
         ]
         
-        entry = price
-        # Tighter targets for reversal plays
-        target = round(entry * 1.08, 2)  # 8% target
-        stop = round(entry * 0.94, 2)    # 6% stop (tighter due to higher risk)
+        # Add slippage buffer to entry price for realistic NEPSE execution
+        entry = price * (1 + settings.slippage_pct)
+        # ATR-based stop loss and target (reversal plays use tighter stops)
+        stop, target = self._calculate_atr_based_levels(df, entry, stop_multiplier=2.0, rr_ratio=1.3)
         
         signal = StrategySignal(
             symbol=symbol,

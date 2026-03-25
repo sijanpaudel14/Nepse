@@ -55,25 +55,57 @@ class TechnicalIndicators:
         """
         Ensure OHLCV columns are numeric.
         DEFENSIVE: Handle NaN, None, and string values gracefully.
+        
+        CRITICAL: We DO NOT synthesize missing OHLC data by copying close prices.
+        This would create false signals (breakouts, understated ATR).
+        Instead, we flag incomplete rows and exclude them from calculations.
         """
         numeric_cols = ["open", "high", "low", "close", "volume"]
         for col in numeric_cols:
             self.df[col] = pd.to_numeric(self.df[col], errors="coerce")
         
-        # Fill missing 'open' with 'close' from previous day (common NEPSE API issue)
-        if self.df["open"].isna().all():
-            self.df["open"] = self.df["close"].shift(1)
-            self.df.loc[self.df.index[0], "open"] = self.df.loc[self.df.index[0], "close"]
+        # Track which rows have complete OHLC data
+        ohlc_cols = ["open", "high", "low", "close"]
+        self.df["ohlc_complete"] = ~self.df[ohlc_cols].isna().any(axis=1)
         
-        # DEFENSIVE: Fill forward/backward for any remaining NaN in high/low
-        self.df["high"] = self.df["high"].fillna(self.df["close"])
-        self.df["low"] = self.df["low"].fillna(self.df["close"])
-        self.df["open"] = self.df["open"].fillna(self.df["close"])
+        # Count incomplete rows for logging
+        incomplete_count = (~self.df["ohlc_complete"]).sum()
+        if incomplete_count > 0:
+            logger.warning(
+                f"OHLC data incomplete: {incomplete_count} rows have missing O/H/L/C values. "
+                f"These rows will be excluded from indicator calculations that require complete OHLC."
+            )
+        
+        # For rows with missing OPEN only (common NEPSE API issue):
+        # Fill with previous close ONLY if it's a single-column issue
+        open_only_missing = self.df["open"].isna() & ~self.df[["high", "low", "close"]].isna().any(axis=1)
+        if open_only_missing.any():
+            self.df.loc[open_only_missing, "open"] = self.df.loc[open_only_missing, "close"].shift(1)
+            # First row gets close if no previous day
+            first_idx = self.df.index[0]
+            if pd.isna(self.df.loc[first_idx, "open"]):
+                self.df.loc[first_idx, "open"] = self.df.loc[first_idx, "close"]
+            logger.debug(f"Filled {open_only_missing.sum()} missing OPEN values with previous close (acceptable fallback)")
+        
+        # For HIGH/LOW: DO NOT fill with close - this understates volatility
+        # Instead, mark these rows as incomplete
+        hl_missing = self.df["high"].isna() | self.df["low"].isna()
+        if hl_missing.any():
+            logger.warning(
+                f"HIGH/LOW data missing for {hl_missing.sum()} rows. "
+                f"ATR and volatility calculations may be affected. Data NOT synthesized."
+            )
+        
+        # Volume: Fill with 0 (acceptable - indicates trading halt or no data)
         self.df["volume"] = self.df["volume"].fillna(0)
         
-        # Only drop rows with NaN in essential columns (close)
+        # Only drop rows missing CLOSE (essential for all calculations)
         essential_cols = ["close"]
+        rows_before = len(self.df)
         self.df = self.df.dropna(subset=essential_cols)
+        rows_dropped = rows_before - len(self.df)
+        if rows_dropped > 0:
+            logger.warning(f"Dropped {rows_dropped} rows missing CLOSE price (essential data)")
     
     def has_sufficient_data(self, min_rows: int) -> bool:
         """
@@ -239,40 +271,104 @@ class TechnicalIndicators:
     
     def add_atr(self, period: int = 14) -> pd.DataFrame:
         """
-        Add Average True Range.
+        Add Average True Range using the EXACT True Range formula.
         
-        ATR measures volatility in absolute terms.
-        Used for position sizing and stop-loss calculation.
+        TRUE RANGE = max(
+            High - Low,
+            |High - Previous Close|,
+            |Low - Previous Close|
+        )
         
-        DEFENSIVE: If insufficient data, fallback to 2% of closing price.
+        ATR = Wilder's Smoothed Moving Average of True Range
+        
+        BULLETPROOF IMPLEMENTATION:
+        - Validates all OHLC data before calculation
+        - Calculates True Range manually (no library dependency for core math)
+        - Uses Wilder's smoothing (alpha = 1/period)
+        - NEVER estimates - returns NaN with clear flag if data insufficient
+        - Downstream code MUST check 'atr_is_valid' before using ATR
         """
-        # DEFENSIVE: Check if we have enough data
+        # Initialize columns
+        self.df["atr"] = np.nan
+        self.df["atr_is_valid"] = False
+        self.df["true_range"] = np.nan
+        
+        # VALIDATION: Minimum data requirements
         min_required = period + 1
         if len(self.df) < min_required:
-            # Fallback: Use 2% of closing price as default volatility
-            self.df["atr"] = self.df["close"] * 0.02
-            logger.debug(f"ATR fallback: Using 2% of close (need {min_required} rows, have {len(self.df)})")
+            logger.warning(
+                f"❌ ATR INVALID: Insufficient data ({len(self.df)}/{min_required} rows). "
+                f"ATR cannot be calculated. Downstream functions must handle NaN."
+            )
+            return self.df
+        
+        # VALIDATION: Required columns
+        required_cols = ["high", "low", "close"]
+        missing_cols = [col for col in required_cols if col not in self.df.columns]
+        if missing_cols:
+            logger.warning(f"❌ ATR INVALID: Missing columns {missing_cols}")
             return self.df
         
         try:
-            atr_result = ta.atr(
-                self.df["high"], 
-                self.df["low"], 
-                self.df["close"], 
-                length=period
-            )
-            if atr_result is not None and not atr_result.isna().all():
-                self.df["atr"] = atr_result
-                # DEFENSIVE: Fill early NaN values with 2% fallback
-                self.df["atr"] = self.df["atr"].fillna(self.df["close"] * 0.02)
+            high = self.df["high"].values
+            low = self.df["low"].values
+            close = self.df["close"].values
+            
+            # VALIDATION: Check for NaN in essential data
+            if np.isnan(high).all() or np.isnan(low).all() or np.isnan(close).all():
+                logger.warning("❌ ATR INVALID: OHLC data contains all NaN values")
+                return self.df
+            
+            # Calculate TRUE RANGE manually (exact formula)
+            true_range = np.zeros(len(self.df))
+            true_range[0] = high[0] - low[0]  # First row: just H-L
+            
+            for i in range(1, len(self.df)):
+                # Skip if any value is NaN
+                if np.isnan(high[i]) or np.isnan(low[i]) or np.isnan(close[i-1]):
+                    true_range[i] = np.nan
+                    continue
+                
+                # TRUE RANGE = max(H-L, |H-PC|, |L-PC|)
+                tr1 = high[i] - low[i]
+                tr2 = abs(high[i] - close[i-1])
+                tr3 = abs(low[i] - close[i-1])
+                true_range[i] = max(tr1, tr2, tr3)
+            
+            self.df["true_range"] = true_range
+            
+            # Calculate ATR using WILDER'S SMOOTHING
+            # Wilder's smoothing: alpha = 1/period
+            tr_series = pd.Series(true_range)
+            atr_values = tr_series.ewm(alpha=1.0/period, min_periods=period, adjust=False).mean()
+            
+            self.df["atr"] = atr_values
+            
+            # Mark which rows have valid ATR
+            self.df["atr_is_valid"] = ~self.df["atr"].isna()
+            
+            # Count valid vs invalid
+            valid_count = self.df["atr_is_valid"].sum()
+            invalid_count = len(self.df) - valid_count
+            
+            if valid_count == 0:
+                logger.warning("❌ ATR INVALID: All calculated values are NaN")
+            elif invalid_count > 0:
+                logger.debug(f"ATR: {valid_count} valid values, {invalid_count} NaN (early period)")
             else:
-                # Fallback if pandas-ta returns all NaN
-                self.df["atr"] = self.df["close"] * 0.02
-                logger.debug(f"ATR calculation returned NaN (using 2% fallback)")
+                logger.debug(f"ATR: All {valid_count} values calculated successfully")
+            
+            # VALIDATION: Final check that latest ATR is valid
+            latest_atr = self.df["atr"].iloc[-1]
+            if pd.isna(latest_atr) or latest_atr <= 0:
+                logger.warning(
+                    f"⚠️ ATR WARNING: Latest ATR is invalid ({latest_atr}). "
+                    f"Check OHLC data quality."
+                )
+            
         except Exception as e:
-            # Ultimate fallback on any error
-            self.df["atr"] = self.df["close"] * 0.02
-            logger.warning(f"ATR calculation error: {e} (using 2% fallback)")
+            logger.error(f"❌ ATR CALCULATION FAILED: {e}")
+            # Leave as NaN - do not estimate
         
         return self.df
     
@@ -288,10 +384,10 @@ class TechnicalIndicators:
         """
         period = period or settings.volume_avg_period
         
-        # Volume Moving Average
-        self.df["volume_avg"] = ta.sma(self.df["volume"], length=period)
+        # Volume Moving Average (shifted to avoid lookahead bias - compare today's volume to YESTERDAY's average)
+        self.df["volume_avg"] = ta.sma(self.df["volume"], length=period).shift(1)
         
-        # Volume spike (current volume / average)
+        # Volume spike (current volume / previous average)
         # SAFE DIVISION: Avoid division by zero/NaN by using np.where
         self.df["volume_spike"] = np.where(
             (self.df["volume_avg"].notna()) & (self.df["volume_avg"] > 0),

@@ -145,9 +145,11 @@ class OrderFlowAnalyzer:
             logger.error(f"Failed to fetch data for {symbol}: {e}")
             return pd.DataFrame()
     
-    def _estimate_buy_sell_volume(self, row: pd.Series) -> Tuple[int, int]:
+    def _estimate_buy_sell_volume(self, row: pd.Series, actual_buy_qty: Optional[int] = None, actual_sell_qty: Optional[int] = None) -> Tuple[int, int]:
         """
         Estimate buy vs sell volume from OHLC data.
+        
+        H2 FIX: Now accepts actual floorsheet data for validation.
         
         Method: Use close position within range
         - Close near high = more buying
@@ -176,6 +178,21 @@ class OrderFlowAnalyzer:
             
             buy_volume = int(volume * range_position)
             sell_volume = volume - buy_volume
+            
+            # H2 FIX: Validate against actual floorsheet if available
+            if actual_buy_qty is not None and actual_sell_qty is not None:
+                total_actual = actual_buy_qty + actual_sell_qty
+                if total_actual > 0:
+                    actual_buy_ratio = actual_buy_qty / total_actual
+                    estimated_ratio = range_position
+                    
+                    # If divergence >30%, use actual data instead
+                    if abs(actual_buy_ratio - estimated_ratio) > 0.30:
+                        logger.debug(
+                            f"Estimate diverges from floorsheet by {abs(actual_buy_ratio - estimated_ratio)*100:.1f}%. "
+                            f"Using actual data."
+                        )
+                        return actual_buy_qty, actual_sell_qty
             
             return buy_volume, sell_volume
             

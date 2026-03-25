@@ -60,11 +60,21 @@ class PositionSize:
     risk_reward_ratio: Optional[float] = None    # Reward / Risk
     
     def is_valid(self) -> bool:
-        """Check if position size is valid."""
+        """
+        Check if position size is valid.
+        
+        Validates that:
+        - Shares are positive
+        - Position value is positive  
+        - Risk is within acceptable limits (≤ 2%)
+        """
+        # Use hardcoded 2% limit (the golden rule) instead of settings
+        MAX_RISK_PCT = 2.0  # 2% maximum risk per trade
+        
         return (
             self.shares > 0 and
             self.position_value > 0 and
-            self.risk_percent <= settings.max_risk_per_trade_pct
+            self.risk_percent <= MAX_RISK_PCT
         )
     
     def summary(self) -> str:

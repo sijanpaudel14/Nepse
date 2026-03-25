@@ -45,6 +45,14 @@ except ImportError:
     ta = None
     logger.warning("pandas-ta not installed. Some features may be limited.")
 
+# Import PositionSizer for proper risk-based position sizing
+try:
+    from risk.position_sizer import PositionSizer, SizingMethod, PositionSize
+    POSITION_SIZER_AVAILABLE = True
+except ImportError:
+    POSITION_SIZER_AVAILABLE = False
+    logger.warning("PositionSizer not available. Using fallback position sizing.")
+
 
 # ============================================================================
 # ENUMS & DATA CLASSES
@@ -145,6 +153,11 @@ class TradingSignal:
     days_until_t2: int = 0         # Days until T2
     estimated_exit_date_t3: Optional[date] = None  # When to sell at T3
     days_until_t3: int = 0         # Days until T3
+
+    # Multi-horizon scenario analysis (if bought now)
+    horizon_analysis: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # If bought X ago, what to do today
+    holding_age_actions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     
     # Context
     trend_phase: TrendPhase = TrendPhase.UNKNOWN
@@ -217,6 +230,7 @@ class TechnicalSignalEngine:
         current_price: float = None,
         broker_data: Dict = None,
         lookback_days: int = 365,
+        sector: Optional[str] = None,
     ) -> TradingSignal:
         """
         Generate comprehensive trading signal for a stock.
@@ -229,12 +243,14 @@ class TechnicalSignalEngine:
             current_price: Optional live price override
             broker_data: Optional broker activity data
             lookback_days: Days of history to analyze
+            sector: Optional sector name for sector-specific momentum analysis
             
         Returns:
             TradingSignal with complete entry/exit recommendations
         """
         symbol = symbol.upper()
-        logger.info(f"📊 Generating trading signal for {symbol}")
+        logger.info(f"📊 Generating trading signal for {symbol}" + 
+                   (f" ({sector})" if sector else ""))
         
         # 1. Fetch data if not provided
         df = price_history
@@ -267,7 +283,7 @@ class TechnicalSignalEngine:
         # 6. Analyze exit conditions (for existing positions)
         exit_analysis = self._analyze_exit_conditions(df, ltp, trend_phase, patterns, resistance)
         
-        # 7. Generate signal
+        # 7. Generate signal with sector context
         signal = self._generate_final_signal(
             symbol=symbol,
             ltp=ltp,
@@ -278,7 +294,8 @@ class TechnicalSignalEngine:
             support=support,
             resistance=resistance,
             atr=atr,
-            df=df
+            df=df,
+            sector=sector,  # Pass sector for momentum calculation
         )
         
         # 8. Add broker data insights if available
@@ -334,15 +351,15 @@ class TechnicalSignalEngine:
         
         ltp = close[-1]
         
-        # Calculate trend metrics
-        price_vs_ema20 = (ltp / ema20[-1] - 1) * 100
-        price_vs_ema50 = (ltp / ema50[-1] - 1) * 100
-        ema20_vs_ema50 = (ema20[-1] / ema50[-1] - 1) * 100
+        # Calculate trend metrics (with division guards)
+        price_vs_ema20 = (ltp / max(ema20[-1], 0.001) - 1) * 100 if ema20[-1] > 0 else 0
+        price_vs_ema50 = (ltp / max(ema50[-1], 0.001) - 1) * 100 if ema50[-1] > 0 else 0
+        ema20_vs_ema50 = (ema20[-1] / max(ema50[-1], 0.001) - 1) * 100 if ema50[-1] > 0 else 0
         
         # Recent price action (last 20 days)
         recent_high = max(high[-20:])
         recent_low = min(low[-20:])
-        recent_range_pct = (recent_high - recent_low) / recent_low * 100
+        recent_range_pct = (recent_high - recent_low) / max(recent_low, 0.001) * 100
         
         # Trend direction from higher highs/lower lows
         highs_trend = self._calculate_trend_direction(high[-30:])
@@ -406,12 +423,280 @@ class TechnicalSignalEngine:
         if volume_trend > 10:  # Volume increasing (distribution volume)
             score[TrendPhase.DISTRIBUTION] += 25
         
+        # === ENHANCED: Volume-Price Divergence Analysis (Wyckoff) ===
+        # This adds proper smart money detection beyond simple volume trends
+        vol_divergence = self._analyze_volume_price_divergence(df)
+        
+        # Apply divergence scores to phase detection
+        score[TrendPhase.ACCUMULATION] += vol_divergence["accumulation_score"]
+        score[TrendPhase.DISTRIBUTION] += vol_divergence["distribution_score"]
+        
         # Return phase with highest score
         best_phase = max(score, key=score.get)
         if score[best_phase] < 40:
             return TrendPhase.UNKNOWN
         
         return best_phase
+    
+    def _analyze_volume_price_divergence(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        BULLETPROOF Wyckoff volume-price divergence analysis.
+        
+        This is the mathematical foundation for detecting smart money activity:
+        
+        ACCUMULATION signals (smart money buying):
+        - Volume DECREASING on down moves (selling exhaustion)
+        - Volume INCREASING on up moves (demand appearing)
+        - More volume on up days than down days
+        - Price holding support levels
+        
+        DISTRIBUTION signals (smart money selling):
+        - Volume INCREASING on down moves (supply appearing)
+        - Volume DECREASING on up moves (lack of demand)
+        - More volume on down days than up days
+        - Price failing at resistance
+        
+        IMPLEMENTATION GUARANTEES:
+        - All inputs validated
+        - All division operations protected against zero
+        - All array operations bounded
+        - Scores clamped to valid ranges
+        - Always returns a valid result dict
+        
+        Returns:
+            Dict with accumulation_score, distribution_score, and analysis details
+        """
+        # Default result (always valid)
+        result = {
+            "accumulation_score": 0,
+            "distribution_score": 0,
+            "volume_up_ratio": 1.0,
+            "down_volume_trend": "unknown",
+            "up_volume_trend": "unknown",
+            "analysis": [],
+            "confidence": "low",
+            "data_quality": "unknown",
+        }
+        
+        # === INPUT VALIDATION ===
+        if df is None or df.empty:
+            result["analysis"].append("DataFrame is None or empty")
+            result["data_quality"] = "no_data"
+            return result
+        
+        if 'close' not in df.columns:
+            result["analysis"].append("'close' column missing")
+            result["data_quality"] = "missing_close"
+            return result
+        
+        if 'volume' not in df.columns:
+            result["analysis"].append("'volume' column missing - cannot analyze")
+            result["data_quality"] = "missing_volume"
+            return result
+        
+        if len(df) < 20:
+            result["analysis"].append(f"Insufficient data ({len(df)}/20 rows)")
+            result["data_quality"] = "insufficient"
+            return result
+        
+        try:
+            # Extract last 20 periods
+            close = df['close'].values[-20:].astype(float)
+            volume = df['volume'].values[-20:].astype(float)
+            
+            # Validate data
+            if np.isnan(close).all():
+                result["analysis"].append("All close values are NaN")
+                result["data_quality"] = "invalid_close"
+                return result
+            
+            if np.isnan(volume).all() or np.sum(volume) == 0:
+                result["analysis"].append("Volume data unavailable or all zeros")
+                result["data_quality"] = "invalid_volume"
+                return result
+            
+            # Replace NaN with 0 for volume (trading halts)
+            volume = np.nan_to_num(volume, nan=0.0)
+            
+            result["data_quality"] = "good"
+            
+            # === PRICE CHANGE ANALYSIS ===
+            price_changes = np.diff(close)
+            volumes = volume[1:]  # Align with price changes (19 values)
+            
+            # Separate up days and down days
+            up_mask = price_changes > 0
+            down_mask = price_changes < 0
+            flat_mask = price_changes == 0
+            
+            up_count = np.sum(up_mask)
+            down_count = np.sum(down_mask)
+            
+            # === VOLUME BY DIRECTION ===
+            up_day_volumes = volumes[up_mask] if up_count > 0 else np.array([])
+            down_day_volumes = volumes[down_mask] if down_count > 0 else np.array([])
+            
+            avg_volume_up = float(np.mean(up_day_volumes)) if len(up_day_volumes) > 0 else 0.0
+            avg_volume_down = float(np.mean(down_day_volumes)) if len(down_day_volumes) > 0 else 0.0
+            
+            # Volume ratio (protected division)
+            if avg_volume_down > 0:
+                volume_up_ratio = avg_volume_up / avg_volume_down
+            elif avg_volume_up > 0:
+                volume_up_ratio = 2.0  # All volume on up days
+            else:
+                volume_up_ratio = 1.0  # No volume
+            
+            result["volume_up_ratio"] = round(volume_up_ratio, 3)
+            
+            # === VOLUME TREND ON DOWN DAYS (Key Wyckoff Signal) ===
+            # Compare first half vs second half of down-day volumes
+            
+            # Split into earlier (first 10 bars) and recent (last 10 bars)
+            if len(price_changes) >= 10:
+                earlier_changes = price_changes[:10]
+                recent_changes = price_changes[-10:]
+                earlier_volumes = volumes[:10]
+                recent_volumes = volumes[-10:]
+            else:
+                earlier_changes = price_changes[:len(price_changes)//2]
+                recent_changes = price_changes[len(price_changes)//2:]
+                earlier_volumes = volumes[:len(volumes)//2]
+                recent_volumes = volumes[len(volumes)//2:]
+            
+            # Get down-day volumes for each period
+            earlier_down_mask = earlier_changes < 0
+            recent_down_mask = recent_changes < 0
+            
+            earlier_down_vols = earlier_volumes[earlier_down_mask] if earlier_down_mask.any() else np.array([])
+            recent_down_vols = recent_volumes[recent_down_mask] if recent_down_mask.any() else np.array([])
+            
+            earlier_down_vol = float(np.mean(earlier_down_vols)) if len(earlier_down_vols) > 0 else 0.0
+            recent_down_vol = float(np.mean(recent_down_vols)) if len(recent_down_vols) > 0 else 0.0
+            
+            # === UP-DAY VOLUME TREND ===
+            earlier_up_mask = earlier_changes > 0
+            recent_up_mask = recent_changes > 0
+            
+            earlier_up_vols = earlier_volumes[earlier_up_mask] if earlier_up_mask.any() else np.array([])
+            recent_up_vols = recent_volumes[recent_up_mask] if recent_up_mask.any() else np.array([])
+            
+            earlier_up_vol = float(np.mean(earlier_up_vols)) if len(earlier_up_vols) > 0 else 0.0
+            recent_up_vol = float(np.mean(recent_up_vols)) if len(recent_up_vols) > 0 else 0.0
+            
+            # === ACCUMULATION SCORING ===
+            accumulation_score = 0
+            
+            # 1. Down-day volume declining (selling exhaustion) - with division guard
+            if earlier_down_vol > 0:
+                down_vol_change = recent_down_vol / max(earlier_down_vol, 0.001)
+                if down_vol_change < 0.6:  # 40%+ decrease
+                    accumulation_score += 35
+                    result["down_volume_trend"] = "strongly_decreasing"
+                    result["analysis"].append("✅ Strong selling exhaustion (down volume -40%+)")
+                elif down_vol_change < 0.8:  # 20-40% decrease
+                    accumulation_score += 25
+                    result["down_volume_trend"] = "decreasing"
+                    result["analysis"].append("✅ Selling exhaustion (down volume declining)")
+                elif down_vol_change < 0.95:
+                    accumulation_score += 10
+                    result["down_volume_trend"] = "slightly_decreasing"
+                else:
+                    result["down_volume_trend"] = "stable"
+            
+            # 2. Up-day volume increasing (demand building) - with division guard
+            if earlier_up_vol > 0:
+                up_vol_change = recent_up_vol / max(earlier_up_vol, 0.001)
+                if up_vol_change > 1.4:  # 40%+ increase
+                    accumulation_score += 30
+                    result["up_volume_trend"] = "strongly_increasing"
+                    result["analysis"].append("✅ Strong demand building (up volume +40%+)")
+                elif up_vol_change > 1.2:
+                    accumulation_score += 20
+                    result["up_volume_trend"] = "increasing"
+                    result["analysis"].append("✅ Demand building (up volume increasing)")
+                elif up_vol_change > 1.05:
+                    accumulation_score += 10
+                    result["up_volume_trend"] = "slightly_increasing"
+            
+            # 3. More volume on up days (demand > supply)
+            if volume_up_ratio > 1.5:
+                accumulation_score += 25
+                result["analysis"].append(f"✅ Strong demand: {volume_up_ratio:.2f}x more volume on up days")
+            elif volume_up_ratio > 1.2:
+                accumulation_score += 15
+                result["analysis"].append(f"✅ Demand present: {volume_up_ratio:.2f}x up/down ratio")
+            elif volume_up_ratio > 1.05:
+                accumulation_score += 5
+            
+            # === DISTRIBUTION SCORING ===
+            distribution_score = 0
+            
+            # 1. Down-day volume increasing (supply appearing)
+            if earlier_down_vol > 0:
+                down_vol_change = recent_down_vol / earlier_down_vol
+                if down_vol_change > 1.4:
+                    distribution_score += 35
+                    result["down_volume_trend"] = "strongly_increasing"
+                    result["analysis"].append("⚠️ Heavy supply appearing (down volume +40%+)")
+                elif down_vol_change > 1.2:
+                    distribution_score += 25
+                    result["down_volume_trend"] = "increasing"
+                    result["analysis"].append("⚠️ Supply appearing (down volume increasing)")
+                elif down_vol_change > 1.05:
+                    distribution_score += 10
+            
+            # 2. Up-day volume declining (lack of demand)
+            if earlier_up_vol > 0:
+                up_vol_change = recent_up_vol / earlier_up_vol
+                if up_vol_change < 0.6:
+                    distribution_score += 30
+                    result["up_volume_trend"] = "strongly_decreasing"
+                    result["analysis"].append("⚠️ Demand drying up (up volume declining)")
+                elif up_vol_change < 0.8:
+                    distribution_score += 20
+                    result["up_volume_trend"] = "decreasing"
+            
+            # 3. More volume on down days (supply > demand)
+            if volume_up_ratio < 0.7:
+                distribution_score += 25
+                result["analysis"].append(f"⚠️ Heavy supply: {1/volume_up_ratio:.2f}x more volume on down days")
+            elif volume_up_ratio < 0.85:
+                distribution_score += 15
+                result["analysis"].append(f"⚠️ Supply present: {volume_up_ratio:.2f}x up/down ratio")
+            elif volume_up_ratio < 0.95:
+                distribution_score += 5
+            
+            # === CLAMP SCORES TO VALID RANGE ===
+            accumulation_score = max(0, min(100, accumulation_score))
+            distribution_score = max(0, min(100, distribution_score))
+            
+            result["accumulation_score"] = accumulation_score
+            result["distribution_score"] = distribution_score
+            
+            # Determine confidence
+            total_evidence = accumulation_score + distribution_score
+            if total_evidence >= 70:
+                result["confidence"] = "high"
+            elif total_evidence >= 40:
+                result["confidence"] = "medium"
+            else:
+                result["confidence"] = "low"
+            
+            # Add summary
+            if accumulation_score > distribution_score + 20:
+                result["analysis"].append(f"📊 ACCUMULATION phase detected (score: {accumulation_score})")
+            elif distribution_score > accumulation_score + 20:
+                result["analysis"].append(f"📊 DISTRIBUTION phase detected (score: {distribution_score})")
+            else:
+                result["analysis"].append("📊 No clear phase - mixed signals")
+            
+        except Exception as e:
+            logger.warning(f"Volume-price divergence analysis failed: {e}")
+            result["analysis"].append(f"Analysis failed: {str(e)}")
+            result["data_quality"] = "error"
+        
+        return result
     
     def _calculate_trend_direction(self, prices: np.ndarray) -> float:
         """
@@ -539,8 +824,8 @@ class TechnicalSignalEngine:
             today_date = df.index[i] if hasattr(df.index[i], 'date') else date.today()
             
             # NEPSE OPTIMIZATION: Filter out tiny candles (low liquidity noise)
-            # Only detect patterns if body > 2% of total range
-            if total_range > 0 and (body / c) < 0.02:  # Body must be > 2% of close price
+            # Only detect patterns if body > 2% of total range (with division guard)
+            if total_range > 0 and (body / max(c, 0.001)) < 0.02:  # Body must be > 2% of close price
                 continue  # Skip tiny candles
             
             # HAMMER: Small body at top, long lower wick (bullish reversal)
@@ -665,8 +950,8 @@ class TechnicalSignalEngine:
                     peak1_idx, peak1_price = peaks[i]
                     peak2_idx, peak2_price = peaks[j]
                     
-                    # Peaks should be within 3% of each other
-                    if abs(peak1_price - peak2_price) / peak1_price < 0.03:
+                    # Peaks should be within 3% of each other (with division guard)
+                    if abs(peak1_price - peak2_price) / max(peak1_price, 0.001) < 0.03:
                         # NEPSE OPTIMIZATION: At least 15-20 days apart (not 10)
                         # Reason: Operators run 2-week pump cycles
                         if peak2_idx - peak1_idx >= 17:  # ~3.5 weeks
@@ -692,8 +977,8 @@ class TechnicalSignalEngine:
                     trough1_idx, trough1_price = troughs[i]
                     trough2_idx, trough2_price = troughs[j]
                     
-                    # Troughs should be within 3% of each other
-                    if abs(trough1_price - trough2_price) / trough1_price < 0.03:
+                    # Troughs should be within 3% of each other (with division guard)
+                    if abs(trough1_price - trough2_price) / max(trough1_price, 0.001) < 0.03:
                         # NEPSE OPTIMIZATION: At least 15-20 days apart (not 10)
                         # Reason: Operators run 2-week pump cycles
                         if trough2_idx - trough1_idx >= 17:  # ~3.5 weeks
@@ -855,8 +1140,8 @@ class TechnicalSignalEngine:
         
         # Price should be in uptrend (EMA20 > EMA50)
         if ema20[-1] > ema50[-1]:
-            # Check if price pulled back to EMA20 (within 2%)
-            distance_to_ema20 = abs(ltp - ema20[-1]) / ema20[-1] * 100
+            # Check if price pulled back to EMA20 (within 2%) - with division guard
+            distance_to_ema20 = abs(ltp - ema20[-1]) / max(ema20[-1], 0.001) * 100 if ema20[-1] > 0 else 0
             
             if distance_to_ema20 < 2:
                 patterns.append(ChartPattern(
@@ -1057,9 +1342,9 @@ class TechnicalSignalEngine:
             exit_score += min(25, pattern.confidence * 0.3)
             reasons.append(f"🔴 {pattern.pattern_type.value}: {pattern.description}")
         
-        # Condition 4: Price at resistance
+        # Condition 4: Price at resistance (with division guard)
         if resistance > 0:
-            distance_to_resistance = (resistance - ltp) / ltp * 100
+            distance_to_resistance = (resistance - ltp) / max(ltp, 0.001) * 100 if ltp > 0 else 0
             if distance_to_resistance < 2:
                 exit_score += 20
                 reasons.append(f"⚠️ Price at resistance (Rs.{resistance:.0f})")
@@ -1094,7 +1379,8 @@ class TechnicalSignalEngine:
         support: float,
         resistance: float,
         atr: float,
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        sector: Optional[str] = None,
     ) -> TradingSignal:
         """Generate the final trading signal."""
         
@@ -1113,10 +1399,16 @@ class TechnicalSignalEngine:
         else:
             signal_type = SignalType.HOLD
         
-        # Calculate levels
+        # Calculate stop loss
         # NEPSE OPTIMIZATION: Use 2.5-3×ATR for stop loss (not 2×) 
         # Reason: NEPSE has +/-10% circuit breakers and higher intraday volatility
-        stop_loss = max(support * 0.98, ltp - 2.75 * atr) if support > 0 else ltp * 0.95
+        # CRITICAL: Always use ATR-based stop (not arbitrary %), even when no support
+        if support > 0:
+            # Best of: just below support OR ATR-based (whichever is wider/safer)
+            stop_loss = max(support * 0.98, ltp - 2.75 * atr)
+        else:
+            # No support found: use ATR-based stop (NOT arbitrary 5%)
+            stop_loss = ltp - 2.75 * atr
         
         # =================================================================
         # REALISTIC NEPSE SWING TRADING TARGETS
@@ -1155,9 +1447,19 @@ class TechnicalSignalEngine:
         target_2 = ltp * (1 + t2_pct / 100)
         target_3 = ltp * (1 + t3_pct / 100)
         
+        # Calculate 6-month historical high to cap T3
+        hist_6m_high = df["high"].max() if len(df) >= 30 else ltp * 1.20
+        
         # If resistance is close and realistic, use it as T3
         if resistance > 0 and resistance > target_2 and resistance < ltp * 1.15:
             target_3 = resistance
+        
+        # CAP T3 at 6-month historical resistance (CRITICAL FIX)
+        # Prevents hallucinated targets beyond historical reality
+        t3_capped = False
+        if target_3 > hist_6m_high:
+            target_3 = hist_6m_high * 0.98  # Cap just below historical high
+            t3_capped = True
         
         # TARGET PROBABILITIES based on historical NEPSE data
         # These are stored for output display
@@ -1170,16 +1472,22 @@ class TechnicalSignalEngine:
         reward = target_2 - ltp
         risk_reward = reward / risk if risk > 0 else 0
         
-        # Position sizing based on risk
-        max_loss_pct = (ltp - stop_loss) / ltp * 100
-        if max_loss_pct > 8:
-            position_size = 1.0  # Very small
-        elif max_loss_pct > 5:
-            position_size = 2.0
-        elif max_loss_pct > 3:
-            position_size = 3.0
-        else:
-            position_size = 5.0  # Standard
+        # Calculate max loss percentage (for display and trailing stop)
+        max_loss_pct = (risk / ltp * 100) if ltp > 0 else 5.0
+        max_loss_pct = max(1.0, min(15.0, max_loss_pct))  # Clamp to 1-15%
+        
+        # Position sizing using proper risk-based method
+        # CRITICAL: Replace arbitrary percentage allocation with proper position sizing
+        position_size_info = self._calculate_position_size(
+            symbol=symbol,
+            entry_price=ltp,
+            stop_loss=stop_loss,
+            target_price=target_2,
+            atr=atr
+        )
+        position_size = position_size_info.get("position_pct", 2.0)
+        position_shares = position_size_info.get("shares", 0)
+        position_risk_rs = position_size_info.get("risk_amount", 0)
         
         # Hold duration based on trend strength (NEPSE: max 12 days for swing)
         hold_duration = self._estimate_hold_duration(df, trend_phase, atr, ltp, target_2)
@@ -1218,8 +1526,12 @@ class TechnicalSignalEngine:
         target_2 = base_price * (1 + t2_pct / 100)
         target_3 = base_price * (1 + t3_pct / 100)
         
-        # PREDICT ENTRY DATE: When will price reach entry zone?
-        entry_date_info = self._predict_entry_date(df, ltp, entry_zone_low, atr, trend_phase)
+        # Re-apply 6-month historical cap to T3
+        if target_3 > hist_6m_high:
+            target_3 = hist_6m_high * 0.98
+        
+        # PREDICT ENTRY DATE: When will price reach entry zone? (SECTOR-AWARE)
+        entry_date_info = self._predict_entry_date(df, ltp, entry_zone_low, atr, trend_phase, sector)
         
         # For immediate-entry scenarios (already near entry), base targets on current price
         if entry_date_info.get("days", 0) <= 0:
@@ -1227,6 +1539,9 @@ class TechnicalSignalEngine:
             target_1 = base_price * (1 + t1_pct / 100)
             target_2 = base_price * (1 + t2_pct / 100)
             target_3 = base_price * (1 + t3_pct / 100)
+            # Re-apply cap
+            if target_3 > hist_6m_high:
+                target_3 = hist_6m_high * 0.98
 
         # PREDICT EXIT DATES: When will price reach T1, T2, T3?
         # Calculate from expected entry date (not today)
@@ -1245,6 +1560,17 @@ class TechnicalSignalEngine:
             start_date=entry_start
         )
         
+        horizon_analysis = self._build_horizon_analysis(
+            ltp=ltp,
+            trend_phase=trend_phase,
+            atr=atr,
+            support=support,
+            resistance=resistance,
+            df=df,  # Pass dataframe for historical high cap
+        )
+        # REMOVED: holding_age_actions - not useful for swing trading decisions
+        holding_age_actions = {}
+
         return TradingSignal(
             symbol=symbol,
             signal_type=signal_type,
@@ -1288,6 +1614,8 @@ class TechnicalSignalEngine:
             days_until_t2=exit_t2_info["days"],
             estimated_exit_date_t3=exit_t3_info["date"],
             days_until_t3=exit_t3_info["days"],
+            horizon_analysis=horizon_analysis,
+            holding_age_actions=holding_age_actions,
             
             trend_phase=trend_phase,
             patterns_detected=pattern_types,
@@ -1330,13 +1658,19 @@ class TechnicalSignalEngine:
         current_price: float,
         entry_zone_low: float,
         atr: float,
-        trend_phase: TrendPhase
+        trend_phase: TrendPhase,
+        sector: Optional[str] = None
     ) -> dict:
         """
         Predict WHEN price will reach entry zone.
         
-        Uses:
-        1. Recent price trend (7-day average daily change)
+        Uses SECTOR-SPECIFIC momentum lookback:
+        - Hydro: 7 trading days (fast operator pumps)
+        - Banking: 14 trading days (macro trends)
+        - Manufacturing: 21 trading days (fundamental-driven)
+        - Default: 10 trading days
+        
+        Also uses:
         2. ATR for volatility
         3. Trend phase for direction probability
         
@@ -1344,6 +1678,10 @@ class TechnicalSignalEngine:
             dict with: date, days, probability, pct_away
         """
         from datetime import date, timedelta
+        from core.sector_config import get_momentum_period
+        
+        # Get sector-specific momentum period (trading days)
+        momentum_days = get_momentum_period(sector)
         
         # Calculate how far current price is from entry zone
         if current_price <= 0 or entry_zone_low <= 0:
@@ -1360,9 +1698,10 @@ class TechnicalSignalEngine:
                 "pct_away": pct_away
             }
         
-        # Calculate recent trend (7-day average daily change)
-        if len(df) >= 10:
-            recent = df.tail(10)
+        # Calculate recent trend using SECTOR-SPECIFIC lookback
+        min_bars_needed = momentum_days + 2  # Need extra for pct_change calculation
+        if len(df) >= min_bars_needed:
+            recent = df.tail(momentum_days)
             daily_changes = recent["close"].pct_change().dropna()
             avg_daily_change = daily_changes.mean() * 100  # As percentage
             daily_volatility = daily_changes.std() * 100
@@ -1480,6 +1819,216 @@ class TechnicalSignalEngine:
             "date": estimated_date,
             "days": days_to_target
         }
+
+    def _build_horizon_analysis(
+        self,
+        ltp: float,
+        trend_phase: TrendPhase,
+        atr: float,
+        support: float,
+        resistance: float,
+        df: pd.DataFrame = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Build expected scenario analysis by horizon if bought now.
+        
+        IMPORTANT: Only shows 1D, 3D, 7D, 2W (14 days max).
+        Technical analysis degrades to random walk beyond 14 trading days.
+        Targets are capped at 6-month historical resistance.
+        
+        Horizons: 1D, 3D, 7D, 2W (NO 1M, 3M - these are hallucinated!)
+        """
+        if ltp <= 0:
+            return {}
+
+        # Calculate 6-month historical high to cap targets
+        hist_6m_high = ltp * 1.20  # Default: 20% above current
+        if df is not None and len(df) >= 30:
+            # Get actual 6-month (or available) historical high
+            hist_6m_high = float(df["high"].max())
+        
+        # Conservative expected daily drift by phase (ATR-based, not linear)
+        atr_pct = (atr / ltp * 100) if atr > 0 else 3.0
+        
+        # Phase-based drift multiplier (how much of ATR is directional)
+        phase_drift = {
+            TrendPhase.MARKUP: 0.35,        # 35% of ATR is upward drift
+            TrendPhase.ACCUMULATION: 0.15,  # 15% upward (consolidating)
+            TrendPhase.DISTRIBUTION: -0.20, # 20% downward drift
+            TrendPhase.MARKDOWN: -0.40,     # 40% downward
+            TrendPhase.UNKNOWN: 0.0,        # No directional bias
+        }
+        drift_mult = phase_drift.get(trend_phase, 0.0)
+
+        # SHORT-TERM ONLY: 1D, 3D, 7D, 2W (max 14 trading days)
+        # Beyond this, TA becomes unreliable
+        horizons = {
+            "1D": 1,
+            "3D": 3,
+            "7D": 7,
+            "2W": 10,
+        }
+
+        analysis: Dict[str, Dict[str, Any]] = {}
+        for label, days in horizons.items():
+            # Expected move = drift * sqrt(days) * ATR%
+            # Using sqrt for realistic volatility scaling
+            exp_move = drift_mult * atr_pct * np.sqrt(days)
+            
+            # Volatility band = ATR% * sqrt(days) * confidence_factor
+            vol_band = atr_pct * np.sqrt(days) * 0.65
+            
+            expected_price = ltp * (1 + exp_move / 100)
+            low_price = ltp * (1 + (exp_move - vol_band) / 100)
+            high_price = ltp * (1 + (exp_move + vol_band) / 100)
+            
+            # Cap high price at historical resistance
+            target_capped = False
+            if high_price > hist_6m_high:
+                high_price = hist_6m_high
+                target_capped = True
+            
+            # Cap expected price at historical resistance
+            if expected_price > hist_6m_high:
+                expected_price = hist_6m_high * 0.98
+                target_capped = True
+
+            # Determine action guidance by horizon
+            if trend_phase in [TrendPhase.MARKDOWN, TrendPhase.DISTRIBUTION]:
+                action = "REDUCE/EXIT ON BOUNCE"
+            elif support > 0 and expected_price < support:
+                action = "EXIT IF SUPPORT BREAKS"
+            elif resistance > 0 and expected_price >= resistance * 0.98:
+                action = "BOOK PARTIAL PROFIT"
+            elif target_capped:
+                action = "PROFIT TARGET (hist. resistance)"
+            else:
+                action = "HOLD WITH TRAIL STOP"
+
+            analysis[label] = {
+                "days": days,
+                "expected_price": round(expected_price, 2),
+                "expected_pct": round((expected_price / ltp - 1) * 100, 2),
+                "range_low": round(low_price, 2),
+                "range_high": round(high_price, 2),
+                "action": action,
+                "capped_at_resistance": target_capped,
+            }
+
+        return analysis
+
+    def _build_holding_age_actions(
+        self,
+        ltp: float,
+        trend_phase: TrendPhase,
+        atr: float,
+        stop_loss: float,
+        target_1: float,
+        target_2: float,
+        df: pd.DataFrame = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        If a trader bought this stock X ago, what to do today?
+        
+        CRITICAL FIX: Uses ACTUAL historical close prices from dataframe,
+        NOT backward calculation/estimation.
+        
+        Buckets: 1D, 3D, 1W, 2W, 1M, 3M, 6M
+        """
+        if ltp <= 0:
+            return {}
+        
+        # Map bucket to approximate trading days
+        buckets = {
+            "1D": 1,
+            "3D": 3,
+            "1W": 5,      # 5 trading days = 1 week
+            "2W": 10,     # 10 trading days = 2 weeks
+            "1M": 22,     # 22 trading days = 1 month
+            "3M": 66,     # 66 trading days = 3 months
+            "6M": 132,    # 132 trading days = 6 months
+        }
+
+        actions: Dict[str, Dict[str, Any]] = {}
+        
+        for label, days_ago in buckets.items():
+            # Get ACTUAL historical price from dataframe
+            actual_buy_price = None
+            data_available = False
+            
+            if df is not None and len(df) > 0:
+                # DataFrame is ordered oldest to newest, so -N is N days ago
+                if len(df) > days_ago:
+                    actual_buy_price = float(df.iloc[-(days_ago + 1)]["close"])
+                    data_available = True
+            
+            if not data_available or actual_buy_price is None or actual_buy_price <= 0:
+                # Mark as unavailable - DO NOT GUESS
+                actions[label] = {
+                    "days": days_ago,
+                    "actual_buy_price": None,
+                    "estimated_buy_price": None,
+                    "pnl_today_pct": None,
+                    "action_today": "DATA UNAVAILABLE",
+                    "confidence": 0,
+                    "data_available": False,
+                }
+                continue
+            
+            # Calculate actual P&L
+            pnl_now = ((ltp / actual_buy_price) - 1) * 100
+
+            # Determine action based on current position
+            # IMPORTANT: Check negative PnL FIRST before positive scenarios
+            if ltp <= stop_loss:
+                action = "EXIT NOW (Stop-loss zone)"
+                conf = 90
+            elif pnl_now < -30:
+                action = "EXIT (deep loss, cut & review thesis)"
+                conf = 80
+            elif pnl_now < -15:
+                action = "REVIEW THESIS (significant loss)"
+                conf = 65
+            elif pnl_now < -5:
+                action = "HOLD IF THESIS VALID, else exit"
+                conf = 55
+            elif pnl_now >= 30:
+                action = "BOOK MAJORITY (70-100%)"
+                conf = 85
+            elif pnl_now >= 15:
+                action = "BOOK 50%, TRAIL REST"
+                conf = 80
+            elif pnl_now >= 10:
+                action = "BOOK PARTIAL (30%), trail rest"
+                conf = 75
+            elif trend_phase in [TrendPhase.MARKDOWN, TrendPhase.DISTRIBUTION]:
+                if pnl_now > 0:
+                    action = "BOOK PROFIT (trend weakening)"
+                    conf = 70
+                else:
+                    action = "EXIT ON BOUNCE (trend down)"
+                    conf = 75
+            elif days_ago >= 66 and pnl_now < 5:
+                action = "CONSIDER EXIT (capital rotation)"
+                conf = 65
+            elif pnl_now > 0:
+                action = "HOLD WITH TRAIL STOP"
+                conf = 60
+            else:
+                action = "HOLD (small loss, review thesis)"
+                conf = 50
+
+            actions[label] = {
+                "days": days_ago,
+                "actual_buy_price": round(actual_buy_price, 2),
+                "estimated_buy_price": round(actual_buy_price, 2),  # Alias for compatibility
+                "pnl_today_pct": round(pnl_now, 1),
+                "action_today": action,
+                "confidence": conf,
+                "data_available": True,
+            }
+
+        return actions
     
     # ========================================================================
     # HELPER METHODS
@@ -1497,27 +2046,38 @@ class TechnicalSignalEngine:
         return df
     
     def _calculate_sr_levels(self, df: pd.DataFrame, ltp: float) -> Tuple[float, float]:
-        """Calculate nearest support and resistance."""
+        """
+        Calculate nearest support and resistance using pivot analysis.
+        
+        Professional method:
+        - Uses actual pivot highs/lows from historical data
+        - Fallback uses ATR-based levels (not arbitrary percentages)
+        """
+        # Get ATR for fallback calculations
+        atr = self._get_atr(df) if len(df) >= 15 else ltp * 0.025
+        
         if len(df) < 20:
-            return ltp * 0.95, ltp * 1.05
+            # ATR-based fallback (not arbitrary %)
+            return ltp - 2 * atr, ltp + 2 * atr
         
         high = df["high"].values
         low = df["low"].values
         
-        # Find pivot highs (resistance)
+        # Find pivot highs (resistance) - local maximums
         resistances = []
         for i in range(5, len(high) - 5):
             if high[i] == max(high[i-5:i+6]) and high[i] > ltp:
                 resistances.append(high[i])
         
-        # Find pivot lows (support)
+        # Find pivot lows (support) - local minimums
         supports = []
         for i in range(5, len(low) - 5):
             if low[i] == min(low[i-5:i+6]) and low[i] < ltp:
                 supports.append(low[i])
         
-        nearest_support = max(supports) if supports else ltp * 0.95
-        nearest_resistance = min(resistances) if resistances else ltp * 1.10
+        # Use actual pivots or ATR-based fallback (NOT arbitrary %)
+        nearest_support = max(supports) if supports else ltp - 2.5 * atr
+        nearest_resistance = min(resistances) if resistances else ltp + 2.5 * atr
         
         return nearest_support, nearest_resistance
     
@@ -1551,7 +2111,16 @@ class TechnicalSignalEngine:
         return float(np.mean(tr[-period:])) if tr else close[-1] * 0.02
     
     def _calculate_rsi(self, close: np.ndarray, period: int = 14) -> Optional[float]:
-        """Calculate RSI."""
+        """
+        Calculate RSI using Wilder's smoothing (professional standard).
+        
+        Standard RSI = 100 - (100 / (1 + RS))
+        RS = Average Gain / Average Loss
+        
+        Wilder's smoothing: 
+        - First average = simple mean of first N periods
+        - Subsequent = (prev_avg * (N-1) + current) / N
+        """
         if len(close) < period + 1:
             return None
         
@@ -1563,13 +2132,19 @@ class TechnicalSignalEngine:
         except:
             pass
         
-        # Manual calculation
+        # Manual calculation with WILDER'S SMOOTHING (not SMA)
         deltas = np.diff(close)
         gains = np.where(deltas > 0, deltas, 0)
         losses = np.where(deltas < 0, -deltas, 0)
         
-        avg_gain = np.mean(gains[-period:])
-        avg_loss = np.mean(losses[-period:])
+        # First average: simple mean of first period
+        avg_gain = np.mean(gains[:period])
+        avg_loss = np.mean(losses[:period])
+        
+        # Wilder's smoothed average for subsequent periods
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
         
         if avg_loss == 0:
             return 100
@@ -1631,6 +2206,201 @@ class TechnicalSignalEngine:
             trend_phase=TrendPhase.UNKNOWN,
         )
     
+    def _calculate_position_size(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_loss: float,
+        target_price: float,
+        atr: Optional[float] = None,
+        portfolio_value: float = 500_000,  # Default portfolio size for NEPSE retail
+    ) -> Dict[str, Any]:
+        """
+        Calculate proper risk-based position size.
+        
+        BULLETPROOF IMPLEMENTATION:
+        - Validates all inputs strictly
+        - Ensures position size is never negative or zero (unless invalid inputs)
+        - Caps risk at 2% per trade (professional standard)
+        - Caps position at 15% of portfolio (diversification)
+        - Handles all edge cases
+        
+        Formula: Shares = (Portfolio * MaxRiskPct) / (Entry - StopLoss)
+        
+        INVARIANTS:
+        1. shares >= 0 (never negative)
+        2. risk_percent <= 2% (2% rule)
+        3. position_pct <= 15% (concentration limit)
+        4. All financial values are finite and non-negative
+        
+        Args:
+            symbol: Stock symbol
+            entry_price: Expected entry price (MUST be positive)
+            stop_loss: Stop loss price (MUST be positive and < entry)
+            target_price: Target price (MUST be positive and > entry)
+            atr: Average True Range (optional, for reference)
+            portfolio_value: Total portfolio value in Rs. (MUST be positive)
+            
+        Returns:
+            Dict with position sizing information - ALWAYS returns valid dict
+        """
+        # Default result (safe fallback)
+        result = {
+            "shares": 0,
+            "position_value": 0.0,
+            "position_pct": 0.0,
+            "risk_amount": 0.0,
+            "risk_percent": 0.0,
+            "method": "invalid_input",
+            "valid": False,
+            "error": None,
+        }
+        
+        # === INPUT VALIDATION ===
+        
+        # Portfolio value
+        if portfolio_value is None or portfolio_value <= 0:
+            result["error"] = f"Invalid portfolio_value: {portfolio_value}"
+            logger.warning(f"{symbol}: {result['error']}")
+            return result
+        
+        portfolio_value = float(portfolio_value)
+        
+        # Entry price
+        if entry_price is None or entry_price <= 0:
+            result["error"] = f"Invalid entry_price: {entry_price}"
+            logger.debug(f"{symbol}: {result['error']}")
+            return result
+        
+        entry_price = float(entry_price)
+        
+        # Stop loss
+        if stop_loss is None or stop_loss <= 0:
+            result["error"] = f"Invalid stop_loss: {stop_loss}"
+            logger.debug(f"{symbol}: {result['error']}")
+            return result
+        
+        stop_loss = float(stop_loss)
+        
+        # INVARIANT: Stop loss must be below entry for long positions
+        if stop_loss >= entry_price:
+            result["error"] = f"Stop loss ({stop_loss}) >= entry ({entry_price})"
+            logger.debug(f"{symbol}: {result['error']}")
+            return result
+        
+        # Target price (optional but should be valid if provided)
+        if target_price is not None:
+            target_price = float(target_price)
+            if target_price <= entry_price:
+                logger.debug(f"{symbol}: Target ({target_price}) <= entry, ignoring")
+                target_price = entry_price * 1.10  # Default 10%
+        else:
+            target_price = entry_price * 1.10
+        
+        # === POSITION SIZING CALCULATION ===
+        
+        # Risk per share
+        risk_per_share = entry_price - stop_loss
+        
+        # Sanity check: risk per share should be reasonable (1-15% of entry)
+        risk_pct_of_entry = risk_per_share / entry_price
+        if risk_pct_of_entry > 0.15:
+            logger.warning(f"{symbol}: Risk per share ({risk_pct_of_entry:.1%}) exceeds 15%, capping")
+            risk_per_share = entry_price * 0.15
+            stop_loss = entry_price - risk_per_share
+        elif risk_pct_of_entry < 0.01:
+            logger.warning(f"{symbol}: Risk per share ({risk_pct_of_entry:.1%}) below 1%, adjusting")
+            risk_per_share = entry_price * 0.01
+            stop_loss = entry_price - risk_per_share
+        
+        # Maximum risk amount (2% of portfolio - THE GOLDEN RULE)
+        MAX_RISK_PCT = 0.02
+        max_risk_amount = portfolio_value * MAX_RISK_PCT
+        
+        # Maximum position size (15% of portfolio - diversification)
+        MAX_POSITION_PCT = 0.15
+        max_position_value = portfolio_value * MAX_POSITION_PCT
+        
+        # Try PositionSizer first (if available)
+        if POSITION_SIZER_AVAILABLE:
+            try:
+                sizer = PositionSizer(
+                    portfolio_value=portfolio_value,
+                    max_risk_per_trade=MAX_RISK_PCT,
+                    max_position_size=MAX_POSITION_PCT,
+                    method=SizingMethod.RISK_PERCENT,
+                )
+                
+                position = sizer.calculate(
+                    symbol=symbol,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    target_price=target_price,
+                    atr=atr,
+                )
+                
+                if position.is_valid():
+                    return {
+                        "shares": int(position.shares),
+                        "position_value": float(position.position_value),
+                        "position_pct": float(position.position_value / portfolio_value * 100),
+                        "risk_amount": float(position.risk_amount),
+                        "risk_percent": float(position.risk_percent * 100),
+                        "method": str(position.sizing_method),
+                        "valid": True,
+                        "risk_reward": float(position.risk_reward_ratio or 0),
+                        "stop_loss": float(stop_loss),
+                        "target_price": float(target_price),
+                    }
+                    
+            except Exception as e:
+                logger.debug(f"{symbol}: PositionSizer failed: {e}")
+        
+        # === MANUAL CALCULATION (Bulletproof Fallback) ===
+        
+        # Shares = Max Risk Amount / Risk Per Share
+        shares = int(max_risk_amount / risk_per_share)
+        
+        # INVARIANT: shares must be non-negative
+        if shares < 0:
+            shares = 0
+        
+        # Calculate position value
+        position_value = shares * entry_price
+        
+        # Cap at maximum position size
+        if position_value > max_position_value:
+            shares = int(max_position_value / entry_price)
+            position_value = shares * entry_price
+            logger.debug(f"{symbol}: Position capped at {MAX_POSITION_PCT:.0%} of portfolio")
+        
+        # Calculate actual risk
+        actual_risk = shares * risk_per_share
+        
+        # Build result
+        if shares > 0:
+            result = {
+                "shares": shares,
+                "position_value": round(position_value, 2),
+                "position_pct": round(position_value / portfolio_value * 100, 2),
+                "risk_amount": round(actual_risk, 2),
+                "risk_percent": round(actual_risk / portfolio_value * 100, 4),
+                "method": "manual_2pct_rule",
+                "valid": True,
+                "risk_reward": round((target_price - entry_price) / risk_per_share, 2),
+                "stop_loss": round(stop_loss, 2),
+                "target_price": round(target_price, 2),
+            }
+            
+            logger.debug(
+                f"{symbol}: Position sized - {shares} shares @ Rs.{entry_price:,.0f}, "
+                f"Risk: Rs.{actual_risk:,.0f} ({result['risk_percent']:.2f}%)"
+            )
+        else:
+            result["error"] = "Calculated shares = 0 (entry price may be too high)"
+        
+        return result
+    
     # ========================================================================
     # REPORT FORMATTING
     # ========================================================================
@@ -1638,6 +2408,19 @@ class TechnicalSignalEngine:
     def format_signal_report(self, signal: TradingSignal) -> str:
         """Format signal as human-readable report."""
         lines = []
+
+        pattern_explanations = {
+            "double_bottom": "Price made two similar lows and bounced: possible bullish reversal.",
+            "double_top": "Price failed twice near same high: possible bearish reversal.",
+            "golden_cross": "Short EMA crossed above long EMA: trend turning bullish.",
+            "death_cross": "Short EMA crossed below long EMA: trend turning bearish.",
+            "breakout": "Price broke above resistance with momentum.",
+            "breakdown": "Price fell below support with weakness.",
+            "bullish_engulfing": "Strong bullish candle engulfed prior bearish candle.",
+            "bearish_engulfing": "Strong bearish candle engulfed prior bullish candle.",
+            "pullback_to_support": "Price retraced to support in uptrend (potential re-entry zone).",
+            "rsi_overbought_rejection": "RSI too high and price rejected: pullback risk.",
+        }
         
         # Header
         signal_emoji = {
@@ -1754,13 +2537,35 @@ class TechnicalSignalEngine:
         lines.append(f"   Position Size:  {signal.position_size_pct:.1f}% of portfolio")
         lines.append(f"   Trailing Stop:  {signal.trailing_stop_pct:.1f}%")
         lines.append(f"   Hold Duration:  ~{signal.hold_duration_days} trading days")
+
+        # Multi-horizon analysis (if bought now)
+        # NOTE: Only showing 1D, 3D, 7D, 2W - beyond 14 days, TA degrades to random walk
+        if signal.horizon_analysis:
+            lines.append("\n⏱️ IF BOUGHT NOW: SHORT-TERM EXIT ANALYSIS")
+            lines.append("-" * 40)
+            lines.append("   ⚠️ TA valid for max 14 trading days. Beyond that, predictions unreliable.\n")
+            lines.append(f"   {'Horizon':<7} {'Expected':<18} {'Range':<24} {'Action'}")
+            lines.append("   " + "-" * 58)
+            # Only show 1D, 3D, 7D, 2W - NO 1M, 3M (hallucinated!)
+            for h in ["1D", "3D", "7D", "2W"]:
+                d = signal.horizon_analysis.get(h)
+                if not d:
+                    continue
+                exp = f"Rs.{d['expected_price']:.2f} ({d['expected_pct']:+.1f}%)"
+                rng = f"Rs.{d['range_low']:.2f} - Rs.{d['range_high']:.2f}"
+                action = d['action']
+                if d.get('capped_at_resistance'):
+                    action += " [CAPPED]"
+                lines.append(f"   {h:<7} {exp:<18} {rng:<24} {action}")
         
         # Patterns Detected
         if signal.patterns_detected:
             lines.append("\n📈 PATTERNS DETECTED")
             lines.append("-" * 40)
             for pattern in signal.patterns_detected[:5]:
-                lines.append(f"   • {pattern.value}")
+                p = pattern.value
+                explain = pattern_explanations.get(p, "Chart-based setup detected.")
+                lines.append(f"   • {p}: {explain}")
         
         # Reasons
         if signal.reasons:

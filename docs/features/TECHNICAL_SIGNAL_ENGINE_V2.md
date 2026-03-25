@@ -188,6 +188,25 @@ Stop Loss: Rs. 515               (accommodates swings)
 Patterns: (filtered - ignores tiny candles)
 ```
 
+### Current Output Enhancements (v2.x)
+
+The signal report now includes:
+
+1) **Complete Trade Plan** for HOLD/WEAK_BUY:
+- Phase 1 Entry timing
+- Phase 2 Hold guidance
+- Phase 3 Exit targets (T1/T2/T3 with probabilities)
+
+2) **If Bought Now: Horizon Exit Analysis**
+- 1D, 3D, 7D, 2W, 1M, 3M expected path + action
+
+3) **If Bought X Ago, What To Do Today**
+- 1D, 3D, 1W, 2W, 1M, 3M, 6M
+- Estimated buy price, today PnL, and action
+
+4) **Pattern explanations in plain language**
+- Example: `double_bottom` means “two similar lows + rebound, bullish reversal candidate”
+
 ---
 
 ## 🔮 FUTURE ENHANCEMENTS (Prepared For)

@@ -74,7 +74,7 @@ nohup python nepse_ai_trading/tools/auto_market_logger.py --daemon > /tmp/market
 ps aux | grep auto_market_logger
 
 # Stop it
-pkill -f auto_market_logger
+kill <PID>
 ```
 **Behavior:** Checks every 30 minutes during market hours, sleeps when market closed
 
@@ -339,7 +339,7 @@ python paper_trader.py --analyze NGPL
 python paper_trader.py --signal NGPL
 
 # 🆕 Get price targets (multi-level)
-python paper_trader.py --price-target NGPL
+python paper_trader.py --price-targets NGPL
 
 # Check portfolio
 python paper_trader.py --portfolio
@@ -380,7 +380,7 @@ self._save_section(f"08_{idx}_signal_{stock}.md", output, f"Trading Signal: {sto
 
 # Add price targets for each stock
 output, _ = self._run_command(
-    ["python", str(PAPER_TRADER), "--price-target", stock],
+    ["python", str(PAPER_TRADER), "--price-targets", stock],
     f"Price Targets - {stock}"
 )
 self._save_section(f"08_{idx}_targets_{stock}.md", output, f"Price Targets: {stock}")
@@ -414,7 +414,7 @@ nohup python auto_market_logger.py --daemon > /tmp/market.log 2>&1 &
 cd market_logs && ls -lt | head -5
 
 # Kill daemon
-pkill -f auto_market_logger
+kill <PID>
 ```
 
 ---

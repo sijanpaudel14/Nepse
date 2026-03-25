@@ -1579,20 +1579,19 @@ class MasterStockScreener:
             except Exception as e:
                 logger.debug(f"{symbol}: Could not fetch open from ShareHub: {e}")
             
-            # Fallback: estimate open price if ShareHub fails
+            # CRITICAL: Do NOT estimate open price - return unavailable if missing
+            # Hallucinating open prices creates false distribution risk detection
             if open_price <= 0:
-                # Estimate open price: In NEPSE, if operators pump, they push price to HIGH first
-                # If HIGH is significantly above previous close, assume open was near HIGH
-                prev_day = df.iloc[-2] if len(df) >= 2 else None
-                prev_close = float(prev_day.get('close', 0) or 0) if prev_day is not None else 0
-                
-                if prev_close > 0 and high_price > prev_close * 1.02:  # >2% gap up
-                    # Operators pumped at open - estimate open near the high
-                    open_price = high_price  # Conservative: assume they opened at the high
-                    logger.debug(f"{symbol}: Estimated open = high ({high_price:.2f}) due to gap up from prev close ({prev_close:.2f})")
-                else:
-                    # Normal trading - estimate open between prev_close and close
-                    open_price = (high_price + low_price) / 2  # Midpoint as fallback
+                logger.warning(f"{symbol}: Open price unavailable from ShareHub - skipping intraday distribution analysis")
+                return {
+                    "risk_level": "UNKNOWN",
+                    "penalty": 0,
+                    "warning": "⚠️ OPEN PRICE UNAVAILABLE - Cannot assess intraday distribution pattern",
+                    "dump_detected": False,
+                    "data_available": False,
+                    "open_price": None,
+                    "reason": "Open price not available from API. Analysis requires real intraday data."
+                }
             
             if close_price <= 0 or volume_today <= 0 or high_price <= 0:
                 return None

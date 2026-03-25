@@ -1,6 +1,6 @@
 # 🚀 NEPSE Intelligence Commands - Quick Reference Card
 
-## 📋 17 Advanced Commands (Copy & Paste Ready)
+## 📋 19 Advanced Commands (Copy & Paste Ready)
 
 ```bash
 # ========== MARKET OVERVIEW ==========
@@ -45,24 +45,33 @@ python nepse_ai_trading/tools/paper_trader.py --dividend-forecast NABIL
 python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 
 # 12. Price Target Analysis 🆕
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
+
+# 13. Trade Calendar (Daily picks up to 30 days) 🆕
+python nepse_ai_trading/tools/paper_trader.py --calendar --calendar-days=30
+
+# 14. Trade Calendar with sector + affordability filters 🆕
+python nepse_ai_trading/tools/paper_trader.py --calendar --calendar-days=30 --sector=hydro --max-price=700
+
+# 15. Trade Calendar quick mode (faster)
+python nepse_ai_trading/tools/paper_trader.py --calendar --quick --calendar-days=14
 
 
 # ========== PORTFOLIO ==========
 
-# 13. Optimize Portfolio
+# 16. Optimize Portfolio
 python nepse_ai_trading/tools/paper_trader.py --optimize-portfolio GVL PPCL NABIL
 
 
 # ========== EXISTING COMMANDS (Still Available) ==========
 
-# Daily Scan
+# 17. Daily Scan
 python nepse_ai_trading/tools/paper_trader.py --scan --strategy=momentum
 
-# Deep Analysis
+# 18. Deep Analysis
 python nepse_ai_trading/tools/paper_trader.py --analyze NGPL
 
-# Portfolio Status
+# 19. Portfolio Status
 python nepse_ai_trading/tools/paper_trader.py --portfolio
 ```
 
@@ -291,6 +300,9 @@ python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 6. **Hold Duration:** Estimated days to hold
 7. **Trend Phase:** ACCUMULATION, MARKUP, DISTRIBUTION, MARKDOWN
 8. **Patterns Detected:** Golden Cross, Hammer, Breakout, etc.
+9. **If Bought Now Analysis:** 1D/3D/7D/2W/1M/3M projected path
+10. **If Bought X Ago, What To Do Today:** 1D/3D/1W/2W/1M/3M/6M action grid
+11. **Pattern Meaning:** Plain-language explanation (e.g., double_bottom)
 
 ### Output Example:
 ```
@@ -320,6 +332,33 @@ python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 - **HOLD:** Wait for clearer signal
 - **SELL signals:** Exit immediately
 
+---
+
+## 🆕 NEW: Trade Calendar (Daily top picks)
+
+Use calendar to get **up to 5 best stocks for every day** in your selected range.
+
+### Usage
+```bash
+# Full market, next 30 days (default)
+python nepse_ai_trading/tools/paper_trader.py --calendar --calendar-days=30
+
+# Sector filter (default sector=all)
+python nepse_ai_trading/tools/paper_trader.py --calendar --calendar-days=30 --sector=hydro
+
+# Affordable picks only
+python nepse_ai_trading/tools/paper_trader.py --calendar --calendar-days=30 --max-price=600
+
+# Full control
+python nepse_ai_trading/tools/paper_trader.py --calendar --calendar-days=30 --sector=finance --max-price=500 --calendar-max-stocks=0
+```
+
+### Key behavior
+- Default analyzes **all stocks** (`--calendar-max-stocks=0`)
+- Shows **every day** in range (no date gaps)
+- Up to **5 picks/day**
+- If no valid picks on a day, it shows explicit “No suitable picks”
+
 ### NEPSE-Specific Optimizations:
 - **Stop Loss:** 2.75×ATR (not 2×) - accounts for +/-10% circuit breakers
 - **Breakout Threshold:** 2% (not 1%) - reduces false breakouts by 40%
@@ -331,15 +370,15 @@ python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 
 ## 🆕 NEW: Price Target Analyzer
 
-The `--price-target` command calculates **multi-level price targets** with probability and risk assessment:
+The `--price-targets` command calculates **multi-level price targets** with probability and risk assessment:
 
 ### Usage:
 ```bash
 # Get price targets for a stock
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
 
-# Get detailed breakdown (22+ target levels)
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL --detailed
+# Get standard target report
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
 ```
 
 ### What It Shows:
@@ -398,7 +437,7 @@ python nepse_ai_trading/tools/paper_trader.py --price-target SMHL --detailed
 ### How to Use:
 ```bash
 # Quick decision tree
-1. Check price target: `--price-target SMHL`
+1. Check price target: `--price-targets SMHL`
 2. If dump risk HIGH → AVOID (even if targets look good)
 3. If dump risk LOW/MEDIUM → Check signal: `--signal SMHL`
 4. If signal = BUY/STRONG_BUY → Enter at conservative target
@@ -409,7 +448,7 @@ python nepse_ai_trading/tools/paper_trader.py --price-target SMHL --detailed
 
 ## 🎯 Complete Feature Comparison
 
-| Feature | --analyze | --signal | --price-target |
+| Feature | --analyze | --signal | --price-targets |
 |---------|-----------|----------|----------------|
 | **Purpose** | Full stock report | Entry/Exit timing | Profit targets |
 | **Output** | Comprehensive | Trading plan | Price levels |
@@ -426,7 +465,7 @@ python nepse_ai_trading/tools/paper_trader.py --analyze SMHL
 python nepse_ai_trading/tools/paper_trader.py --signal SMHL
 
 # 3. If BUY signal, check price targets
-python nepse_ai_trading/tools/paper_trader.py --price-target SMHL
+python nepse_ai_trading/tools/paper_trader.py --price-targets SMHL
 
 # 4. Execute trade with:
 #    - Entry: Signal entry zone
@@ -449,7 +488,7 @@ python nepse_ai_trading/tools/paper_trader.py --price-target SMHL
 ---
 
 **Last Updated:** 2026-03-25  
-**Total Commands:** 17 (added --signal and --price-target)  
+**Total Commands:** 19 (includes --signal, --price-targets, and --calendar variants)  
 **Documentation:** docs/features/COMMAND_REFERENCE_CARD.md
 
 **Print this card. Keep it visible during trading hours.** 📌

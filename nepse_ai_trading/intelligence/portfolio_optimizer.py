@@ -328,9 +328,9 @@ class PortfolioOptimizer:
                 best_weights, returns_df, cov_matrix
             )
             
-            # Try inverse volatility weighting
+            # Try inverse volatility weighting (with division guard)
             vols = returns_df.std()
-            inv_vols = 1 / vols
+            inv_vols = 1 / vols.clip(lower=0.001)  # Prevent division by zero
             inv_vol_weights = inv_vols / inv_vols.sum()
             inv_vol_weights = inv_vol_weights.values
             

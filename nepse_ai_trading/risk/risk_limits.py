@@ -22,7 +22,7 @@ MILLIONAIRE MINDSET:
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict, Optional, Callable, Tuple
 from datetime import date, datetime, timedelta
 from enum import Enum
 from loguru import logger

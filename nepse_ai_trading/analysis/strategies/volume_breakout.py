@@ -67,8 +67,8 @@ class VolumeBreakoutStrategy(BaseStrategy):
         
         df = ti.df.copy()
         
-        # Calculate 50-day volume average
-        df["volume_avg_50"] = df["volume"].rolling(50).mean()
+        # Calculate 50-day volume average (shifted to avoid lookahead bias)
+        df["volume_avg_50"] = df["volume"].rolling(50).mean().shift(1)
         df["volume_spike"] = df["volume"] / df["volume_avg_50"]
         
         # Calculate 20-day high
@@ -135,9 +135,10 @@ class VolumeBreakoutStrategy(BaseStrategy):
         if rsi_ok:
             reasons.append(f"RSI healthy at {rsi:.1f}")
         
-        entry = price
-        target = round(entry * (1 + settings.target_profit), 2)
-        stop = round(entry * (1 - settings.stop_loss), 2)
+        # Add slippage buffer to entry price for realistic NEPSE execution
+        entry = price * (1 + settings.slippage_pct)
+        # ATR-based stop loss and target for volume breakouts
+        stop, target = self._calculate_atr_based_levels(df, entry, stop_multiplier=2.5, rr_ratio=1.6)
         
         signal = StrategySignal(
             symbol=symbol,

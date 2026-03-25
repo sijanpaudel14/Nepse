@@ -417,6 +417,22 @@ class MarketLogger:
                 )
                 self._save_section(f"08_{i}_dividend_{symbol}.md", output, f"Dividend Forecast: {symbol}")
                 master_log.append(f"**Dividend:** `08_{i}_dividend_{symbol}.md`\n\n")
+
+                # Trading signal
+                output, _ = self._run_command(
+                    ["python", str(PAPER_TRADER), "--signal", symbol],
+                    f"Trading Signal: {symbol}"
+                )
+                self._save_section(f"08_{i}_signal_{symbol}.md", output, f"Trading Signal: {symbol}")
+                master_log.append(f"**Signal:** `08_{i}_signal_{symbol}.md`\n\n")
+
+                # Price targets
+                output, _ = self._run_command(
+                    ["python", str(PAPER_TRADER), "--price-targets", symbol],
+                    f"Price Targets: {symbol}"
+                )
+                self._save_section(f"08_{i}_targets_{symbol}.md", output, f"Price Targets: {symbol}")
+                master_log.append(f"**Targets:** `08_{i}_targets_{symbol}.md`\n\n")
                 
                 master_log.append("---\n\n")
         else:

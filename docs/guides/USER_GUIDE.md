@@ -32,7 +32,7 @@ python tools/paper_trader.py --sell SYMBOL --sell-price 580
 | `--sell` | Exit a position | When exit signal appears |
 | `--analyze` | Deep analysis of a single stock | When friend recommends |
 | `--signal` | 🆕 Get trading signal (BUY/SELL/HOLD) with entry/targets | Before buying |
-| `--price-target` | 🆕 Get multi-level price targets with probabilities | Set profit targets |
+| `--price-targets` | 🆕 Get multi-level price targets with probabilities | Set profit targets |
 | `stealth-scan` | Detect smart money sector rotation | Any time (works offline!) |
 
 | Flag | Purpose | Example |
@@ -46,7 +46,7 @@ python tools/paper_trader.py --sell SYMBOL --sell-price 580
 | `--max-price=500` | Budget filter | `--max-price=400` |
 | `--analyze NHPC` | Analyze specific stock | `--analyze NHPC` |
 | `--signal SMHL` | 🆕 Get trading signal with Wyckoff phases | `--signal BARUN` |
-| `--price-target SMHL` | 🆕 Get 4 price target levels | `--price-target NGPL` |
+| `--price-targets SMHL` | 🆕 Get 4 price target levels | `--price-targets NGPL` |
 
 ### 📊 Portfolio Rules (MEMORIZE THESE!)
 
@@ -1066,7 +1066,7 @@ The signal engine is specifically tuned for NEPSE market conditions:
 python tools/paper_trader.py --signal NGPL
 
 # Step 2: If BUY signal (60%+), check targets
-python tools/paper_trader.py --price-target NGPL
+python tools/paper_trader.py --price-targets NGPL
 
 # Step 3: If both look good, execute
 python tools/paper_trader.py --buy-picks NGPL
@@ -1093,7 +1093,7 @@ python tools/paper_trader.py --signal HPPL
 - ✅ **Respect the Wyckoff phase** - Don't buy in DISTRIBUTION
 - ✅ **Trail your stops** - Move stop up as price rises, never widen
 - ✅ **Trust the position size** - 5% max for STRONG_BUY, 3% for BUY
-- ✅ **Combine with --price-target** - Validate targets independently
+- ✅ **Combine with --price-targets** - Validate targets independently
 
 ---
 
@@ -1104,10 +1104,10 @@ python tools/paper_trader.py --signal HPPL
 ### Command:
 ```bash
 # Get 4 price target levels
-python tools/paper_trader.py --price-target SMHL
+python tools/paper_trader.py --price-targets SMHL
 
-# Get detailed breakdown (22+ target levels)
-python tools/paper_trader.py --price-target SMHL --detailed
+# Get standard target report
+python tools/paper_trader.py --price-targets SMHL
 ```
 
 ### What You Get:
@@ -1251,7 +1251,7 @@ Target Hierarchy:
 #### Complete Trading Workflow:
 ```bash
 # Step 1: Check dump risk
-python tools/paper_trader.py --price-target SMHL
+python tools/paper_trader.py --price-targets SMHL
 
 # Step 2: If dump risk LOW, check signal
 python tools/paper_trader.py --signal SMHL

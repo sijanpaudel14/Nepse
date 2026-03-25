@@ -30,6 +30,7 @@ from core.config import settings
 from core.database import SessionLocal, Stock, DailyPrice
 from analysis.strategies import BaseStrategy, StrategySignal
 from analysis.indicators import TechnicalIndicators
+from risk.position_sizer import PositionSizer
 
 
 @dataclass
@@ -162,6 +163,7 @@ class SimpleBacktest:
         self.commission_pct = commission_pct or (
             settings.broker_commission_pct + settings.sebon_fee_pct
         )
+        self.sizer = None  # Initialized in run() with actual capital
     
     def _get_historical_data(
         self, 
@@ -296,6 +298,12 @@ class SimpleBacktest:
         total_slippage = 0.0
         total_commission = 0.0
         
+        # Initialize PositionSizer with capital (H6 fix: proper risk management)
+        self.sizer = PositionSizer(
+            portfolio_value=initial_capital,
+            max_risk_per_trade=settings.risk_per_trade / 100,  # Convert % to decimal
+        )
+        
         # Walk through each day
         for i in range(30, len(df)):  # Need 30 days for indicators
             row = df.iloc[i]
@@ -314,15 +322,25 @@ class SimpleBacktest:
                 exit_reason = ""
                 
                 if row["low"] <= stop_price:
-                    # Stop loss hit (REALITY: no automatic stops in NEPSE!)
-                    # Assume we exit at stop price with extra slippage
-                    exit_price = self._apply_slippage(stop_price, is_buy=False)
+                    # H5 FIX: Stop loss hit - but manual execution means you may NOT catch it
+                    # In NEPSE manual execution: 40% chance you catch the stop during the day
+                    # Otherwise you miss it and exit at close
+                    if np.random.random() < 0.4:  # 40% chance you catch it
+                        exit_price = self._apply_slippage(stop_price, is_buy=False)
+                    else:
+                        # Miss the stop, exit at close with extra slippage
+                        exit_price = self._apply_slippage(row["close"], is_buy=False)
                     exit_triggered = True
                     exit_reason = "stop_loss"
                     
                 elif row["high"] >= target_price:
-                    # Target hit
-                    exit_price = self._apply_slippage(target_price, is_buy=False)
+                    # H5 FIX: Target hit - but market pulls back before you can sell
+                    # Assume 70% chance market holds and you get the target
+                    if np.random.random() < 0.7:  # 70% chance market holds
+                        exit_price = self._apply_slippage(target_price, is_buy=False)
+                    else:
+                        # Market rejects target, you exit at close
+                        exit_price = self._apply_slippage(row["close"], is_buy=False)
                     exit_triggered = True
                     exit_reason = "target"
                 
@@ -354,8 +372,26 @@ class SimpleBacktest:
                     # Enter trade
                     entry_price = self._apply_slippage(price, is_buy=True)
                     
-                    # Calculate position size (simplified: use 100% of capital)
-                    quantity = int(capital / entry_price)
+                    # H6 FIX: Use PositionSizer instead of 100% capital allocation
+                    # Calculate stop loss (use signal's stop or default 5%)
+                    stop_loss = signal.stop_loss if signal.stop_loss else entry_price * (1 - settings.stop_loss)
+                    target_price = signal.target_price if signal.target_price else entry_price * (1 + settings.target_profit)
+                    
+                    # Update sizer with current capital
+                    self.sizer.portfolio_value = capital
+                    self.sizer.max_risk_amount = capital * self.sizer.max_risk_per_trade
+                    
+                    try:
+                        position = self.sizer.calculate(
+                            symbol=symbol,
+                            entry_price=entry_price,
+                            stop_loss=stop_loss,
+                            target_price=target_price,
+                        )
+                        quantity = position.shares
+                    except ValueError:
+                        # Invalid stop loss (above entry), use conservative sizing
+                        quantity = int(capital * 0.1 / entry_price)  # Max 10% of capital
                     
                     if quantity > 0:
                         # Entry cost
