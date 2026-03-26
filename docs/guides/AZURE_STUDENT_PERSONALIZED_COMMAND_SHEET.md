@@ -14,7 +14,7 @@ RG="rg-nepse-student"
 
 # Domain
 FRONTEND_DOMAIN="nepse.sijanpaudel.com.np"
-API_DOMAIN="api.nepse.sijanpaudel.com.np"
+API_DOMAIN="nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io"
 
 # App names
 CONTAINER_ENV="cae-nepse-student"
@@ -176,14 +176,14 @@ Use Azure Portal:
 2. Connect GitHub repo
 3. App location: nepse-saas-frontend
 4. Build output: .next
-5. Add app setting NEXT_PUBLIC_API_URL = https://api.nepse.sijanpaudel.com.np
+5. Add app setting NEXT_PUBLIC_API_URL = https://nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io
 
 ## 11) Domain mapping
 
 Add custom domains in Azure:
 
 1. Frontend: nepse.sijanpaudel.com.np
-2. Backend: api.nepse.sijanpaudel.com.np
+2. Backend: nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io
 
 Azure will show CNAME and TXT records. Add those exact records in your DNS provider.
 

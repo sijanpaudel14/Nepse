@@ -5,7 +5,7 @@
 This guide helps you deploy your full project from start to end with Azure Student credit, keep monthly cost low, and connect:
 
 - nepse.sijanpaudel.com.np (frontend)
-- api.nepse.sijanpaudel.com.np (backend)
+- nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io (backend)
 
 It is written for a complete beginner.
 
@@ -285,7 +285,7 @@ Important app setting in Static Web Apps:
 1. Open Static Web App
 2. Configuration -> Application settings
 3. Add:
-   - NEXT_PUBLIC_API_URL = https://api.nepse.sijanpaudel.com.np
+   - NEXT_PUBLIC_API_URL = https://nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io
 
 Redeploy frontend after setting env variable.
 
@@ -296,7 +296,7 @@ Redeploy frontend after setting env variable.
 You want:
 
 - nepse.sijanpaudel.com.np -> frontend
-- api.nepse.sijanpaudel.com.np -> backend
+- nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io -> backend
 
 ### 12.1 Frontend custom domain
 
@@ -323,7 +323,7 @@ In Container App for backend:
 
 1. Open Container App nepse-api
 2. Custom domains -> Add
-3. Enter api.nepse.sijanpaudel.com.np
+3. Enter nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io
 
 Add DNS records in domain provider (Azure shows exact values):
 
@@ -343,7 +343,7 @@ Add DNS records in domain provider (Azure shows exact values):
 Final URLs to test:
 
 1. https://nepse.sijanpaudel.com.np
-2. https://api.nepse.sijanpaudel.com.np/health
+2. https://nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io/health
 
 ---
 
@@ -412,7 +412,7 @@ Backend:
 ## 17) End-to-End Testing Checklist
 
 1. Frontend loads at nepse.sijanpaudel.com.np
-2. Backend health returns success at api.nepse.sijanpaudel.com.np/health
+2. Backend health returns success at nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io/health
 3. Frontend API calls hit backend domain (check browser network tab)
 4. No CORS errors
 5. No mixed content errors

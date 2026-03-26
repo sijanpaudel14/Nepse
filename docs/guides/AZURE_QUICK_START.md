@@ -109,19 +109,21 @@ BUILD_MODE=static yarn build
 In Azure Portal → Static Web App → Custom domains → Add:
 
 **DNS Record to Add:**
+
 ```
 CNAME  nepse  → <your-app>.azurestaticapps.net
 ```
 
-### For api.nepse.sijanpaudel.com.np (Backend)
+### For nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io (Backend)
 
 ```bash
 az containerapp hostname add \
-  --hostname api.nepse.sijanpaudel.com.np \
+  --hostname nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io \
   -g $RG -n nepse-api
 ```
 
 **DNS Records to Add:**
+
 ```
 CNAME  api.nepse  → nepse-api.<random>.azurecontainerapps.io
 TXT    asuid.api.nepse  → <verification-code-from-azure>
@@ -131,12 +133,12 @@ TXT    asuid.api.nepse  → <verification-code-from-azure>
 
 ## 💡 Monthly Cost Estimate
 
-| Service | Cost |
-|---------|------|
-| Static Web App | FREE |
-| Container Apps (scale-to-zero) | ~$5-8 |
-| Container Registry (Basic) | $5 |
-| **Total** | **$10-13/mo** |
+| Service                        | Cost          |
+| ------------------------------ | ------------- |
+| Static Web App                 | FREE          |
+| Container Apps (scale-to-zero) | ~$5-8         |
+| Container Registry (Basic)     | $5            |
+| **Total**                      | **$10-13/mo** |
 
 **8 months = $80-104** → ✅ Fits in $100 budget!
 

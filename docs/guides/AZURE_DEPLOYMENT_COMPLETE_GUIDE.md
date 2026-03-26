@@ -2,9 +2,10 @@
 
 **Budget:** $100/year Azure Student Credit  
 **Target Duration:** 7-8 months  
-**Domains:**  
-- Frontend: `nepse.sijanpaudel.com.np`  
-- Backend: `api.nepse.sijanpaudel.com.np`
+**Domains:**
+
+- Frontend: `nepse.sijanpaudel.com.np`
+- Backend: `nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io`
 
 ---
 
@@ -12,21 +13,21 @@
 
 ### Recommended Architecture (Most Cost-Effective)
 
-| Service | Component | Monthly Cost | Why |
-|---------|-----------|-------------|-----|
-| **Azure Static Web Apps** | Frontend (Next.js) | **FREE** | Perfect for SSG, includes SSL, global CDN |
-| **Azure Container Apps** | Backend (FastAPI) | **~$5-10/mo** | Scales to zero, pay-per-use |
-| **Azure Cosmos DB Free Tier** | Database (MongoDB API) | **FREE** | 1000 RU/s, 25GB free forever |
+| Service                       | Component              | Monthly Cost  | Why                                       |
+| ----------------------------- | ---------------------- | ------------- | ----------------------------------------- |
+| **Azure Static Web Apps**     | Frontend (Next.js)     | **FREE**      | Perfect for SSG, includes SSL, global CDN |
+| **Azure Container Apps**      | Backend (FastAPI)      | **~$5-10/mo** | Scales to zero, pay-per-use               |
+| **Azure Cosmos DB Free Tier** | Database (MongoDB API) | **FREE**      | 1000 RU/s, 25GB free forever              |
 
 **Total Estimated Cost: $5-10/month = $40-80 for 8 months** ✅
 
 ### Alternative Options (More Expensive)
 
-| Option | Cost/Month | Pros | Cons |
-|--------|-----------|------|------|
-| App Service B1 + Container | ~$13 | Simple | Uses whole budget in ~7mo |
-| ACI (Container Instances) | ~$8-15 | Easy | No scale-to-zero |
-| VM B1s | ~$8 | Full control | Manual management |
+| Option                     | Cost/Month | Pros         | Cons                      |
+| -------------------------- | ---------- | ------------ | ------------------------- |
+| App Service B1 + Container | ~$13       | Simple       | Uses whole budget in ~7mo |
+| ACI (Container Instances)  | ~$8-15     | Easy         | No scale-to-zero          |
+| VM B1s                     | ~$8        | Full control | Manual management         |
 
 ---
 
@@ -72,6 +73,7 @@ az group create \
 ```
 
 **Expected Output:**
+
 ```json
 {
   "id": "/subscriptions/.../resourceGroups/rg-nepse-trading",
@@ -156,6 +158,7 @@ az cosmosdb keys list \
 ```
 
 **Save the connection string!** Format:
+
 ```
 mongodb://nepse-cosmos-db:PRIMARY_KEY@nepse-cosmos-db.mongo.cosmos.azure.com:10255/?ssl=true&replicaSet=globaldb&...
 ```
@@ -219,20 +222,23 @@ cd /run/media/sijanpaudel/New\ Volume/Nepse/nepse-saas-frontend
 ```
 
 Edit `next.config.mjs`:
+
 ```javascript
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',  // Enable static export
+  output: 'export', // Enable static export
   trailingSlash: true,
   images: {
-    unoptimized: true  // Required for static export
+    unoptimized: true, // Required for static export
   },
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'https://api.nepse.sijanpaudel.com.np'
-  }
-};
+    NEXT_PUBLIC_API_URL:
+      process.env.NEXT_PUBLIC_API_URL ||
+      'https://nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io',
+  },
+}
 
-export default nextConfig;
+export default nextConfig
 ```
 
 #### 6.2: Build Static Export
@@ -284,6 +290,7 @@ swa deploy ./out \
 3. Azure will show you DNS records to add
 
 **Add to your DNS (sijanpaudel.com.np):**
+
 ```
 Type: CNAME
 Name: nepse
@@ -296,18 +303,19 @@ TTL: 3600
 ```bash
 # Add custom domain to Container App
 az containerapp hostname add \
-  --hostname api.nepse.sijanpaudel.com.np \
+  --hostname nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io \
   --resource-group rg-nepse-trading \
   --name nepse-api
 
 # Get the verification TXT record
 az containerapp hostname show \
-  --hostname api.nepse.sijanpaudel.com.np \
+  --hostname nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io \
   --resource-group rg-nepse-trading \
   --name nepse-api
 ```
 
 **Add to your DNS:**
+
 ```
 # CNAME Record
 Type: CNAME
@@ -327,7 +335,7 @@ TTL: 3600
 ```bash
 # For Container App - SSL is automatic after domain verification
 az containerapp hostname bind \
-  --hostname api.nepse.sijanpaudel.com.np \
+  --hostname nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io \
   --resource-group rg-nepse-trading \
   --name nepse-api \
   --certificate-type managed
@@ -340,6 +348,7 @@ az containerapp hostname bind \
 ### Phase 8: Environment Variables Reference
 
 #### Backend Container App (.env equivalent)
+
 ```bash
 # Update environment variables
 az containerapp update \
@@ -354,9 +363,10 @@ az containerapp update \
 ```
 
 #### Frontend (.env.production)
+
 ```bash
 # Create .env.production in nepse-saas-frontend/
-NEXT_PUBLIC_API_URL=https://api.nepse.sijanpaudel.com.np
+NEXT_PUBLIC_API_URL=https://nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io
 ```
 
 ---
@@ -364,6 +374,7 @@ NEXT_PUBLIC_API_URL=https://api.nepse.sijanpaudel.com.np
 ## 🔍 Monitoring & Cost Management
 
 ### Check Current Costs
+
 ```bash
 # View cost analysis
 az costmanagement query \
@@ -373,6 +384,7 @@ az costmanagement query \
 ```
 
 ### Set Budget Alert (Very Important!)
+
 ```bash
 # Create budget alert at $10/month
 az consumption budget create \
@@ -386,6 +398,7 @@ az consumption budget create \
 ```
 
 ### View Container App Logs
+
 ```bash
 # Stream logs
 az containerapp logs show \
@@ -429,14 +442,14 @@ az group delete --name rg-nepse-trading --yes --no-wait
 
 ## 💰 Cost Breakdown Summary
 
-| Resource | SKU | Monthly Cost |
-|----------|-----|-------------|
-| Static Web App | Free | $0 |
-| Container Apps | Consumption (scale to 0) | $3-8 |
-| Container Registry | Basic | $5 |
-| Cosmos DB | Free Tier | $0 |
-| Custom Domain SSL | Free | $0 |
-| **Total** | | **$8-13/month** |
+| Resource           | SKU                      | Monthly Cost    |
+| ------------------ | ------------------------ | --------------- |
+| Static Web App     | Free                     | $0              |
+| Container Apps     | Consumption (scale to 0) | $3-8            |
+| Container Registry | Basic                    | $5              |
+| Cosmos DB          | Free Tier                | $0              |
+| Custom Domain SSL  | Free                     | $0              |
+| **Total**          |                          | **$8-13/month** |
 
 **8 months = $64-104** → Fits within $100 budget! ✅
 
@@ -445,6 +458,7 @@ az group delete --name rg-nepse-trading --yes --no-wait
 ## 🚨 Troubleshooting
 
 ### API Not Starting
+
 ```bash
 # Check logs
 az containerapp logs show --name nepse-api --resource-group rg-nepse-trading --tail 100
@@ -455,15 +469,17 @@ az containerapp logs show --name nepse-api --resource-group rg-nepse-trading --t
 ```
 
 ### Domain Not Working
+
 ```bash
 # Verify DNS propagation
 nslookup nepse.sijanpaudel.com.np
-nslookup api.nepse.sijanpaudel.com.np
+nslookup nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io
 
 # DNS can take up to 48 hours to propagate globally
 ```
 
 ### CORS Errors
+
 ```bash
 # Update CORS in backend
 az containerapp update \
@@ -492,4 +508,3 @@ az containerapp update \
 **Created:** March 2024  
 **Estimated Deployment Time:** 1-2 hours  
 **Support:** Open an issue on GitHub
-

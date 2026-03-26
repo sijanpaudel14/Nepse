@@ -15,7 +15,7 @@ set -euo pipefail
 #   SHAREHUB_AUTH_COOKIES
 
 DOMAIN_FRONTEND="nepse.sijanpaudel.com.np"
-DOMAIN_API="api.nepse.sijanpaudel.com.np"
+DOMAIN_API="nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io"
 APP_ROOT="/opt/nepse"
 BACKEND_DIR="$APP_ROOT/nepse_ai_trading"
 FRONTEND_DIR="$APP_ROOT/nepse-saas-frontend"

@@ -47,7 +47,9 @@ jobs:
           az containerapp update \
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:${{ github.sha }}
+            --image ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:${{ github.sha }} \
+            --cpu 1.0 \
+            --memory 2.0Gi
 
       - name: Verify deployment
         run: |
