@@ -3704,6 +3704,13 @@ def main():
         default=0,
         help="Max stocks to analyze for --calendar (0 = all stocks, default: 0)"
     )
+    parser.add_argument(
+        "--ipo-exit",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="📈 Analyze IPO exit signals for newly listed stock (when to sell IPOs)"
+    )
 
     args = parser.parse_args()
 
@@ -4245,6 +4252,17 @@ def main():
         # Print formatted report
         report = engine.format_signal_report(signal)
         print(report)
+        sys.exit(0)
+    
+    if args.ipo_exit:
+        from intelligence.ipo_exit_analyzer import IPOExitAnalyzer
+        
+        symbol = args.ipo_exit.upper()
+        print(f"\n📊 Analyzing IPO exit signals for {symbol}...")
+        
+        analyzer = IPOExitAnalyzer()
+        result = analyzer.analyze(symbol)
+        print(result.format_report())
         sys.exit(0)
     
     trader = PaperTrader()
