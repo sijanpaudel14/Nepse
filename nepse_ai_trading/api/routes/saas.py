@@ -844,79 +844,102 @@ def _get_cached_regime():
 
 @router.get("/market-regime", response_model=MarketRegimeResponse)
 async def get_market_regime():
-    """Get current market regime (Bull/Bear/Panic) with 5-minute cache."""
+    """
+    Get current market regime (Bull/Bear/Panic) with instant response.
+    
+    Returns cached data immediately. If cache is stale, refreshes in background.
+    """
     try:
-        # Check cache first
-        cached = _get_cached_regime()
-        if cached:
-            return cached
-        
-        logger.info("🔄 Fetching fresh market regime data...")
-        
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-        
-        def fetch_regime_data():
-            """Fetch regime in thread with timeout."""
-            from analysis.master_screener import MasterStockScreener
-            from data.fetcher import NepseFetcher
+        # Always return cached data immediately if available
+        if _market_regime_cache["data"] is not None:
+            now = datetime.now()
+            cached_time = _market_regime_cache["timestamp"]
+            age_seconds = (now - cached_time).total_seconds()
             
-            screener = MasterStockScreener(strategy="momentum")
-            regime, reason = screener.check_market_regime()
-            
-            fetcher = NepseFetcher()
-            index_df = fetcher.fetch_index_history(days=60)
-            
-            nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
-            ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
-            
-            return regime, reason, nepse_index, ema50
-        
-        # Run in thread pool with 15 second timeout
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor() as executor:
-            try:
-                regime, reason, nepse_index, ema50 = await asyncio.wait_for(
-                    loop.run_in_executor(executor, fetch_regime_data),
-                    timeout=15.0
-                )
-            except asyncio.TimeoutError:
-                logger.warning("⏱️ NEPSE API timeout (15s), returning default values")
-                # Return cached if available, otherwise default
-                if _market_regime_cache["data"]:
-                    logger.info("Returning stale cache due to timeout")
-                    return _market_regime_cache["data"]
+            # If cache is older than 5 minutes, refresh in background
+            if age_seconds >= _market_regime_cache["ttl_seconds"]:
+                logger.info(f"📦 Returning stale cache ({age_seconds:.0f}s old), refreshing in background...")
                 
-                # Default safe values
-                regime = "BULL"
-                reason = "Market data unavailable (timeout)"
-                nepse_index = 0
-                ema50 = 0
+                # Start background refresh (don't await)
+                import asyncio
+                asyncio.create_task(_refresh_market_regime_background())
+            else:
+                logger.info(f"📦 Returning fresh cache ({age_seconds:.0f}s old)")
+            
+            return _market_regime_cache["data"]
         
-        regime_emoji = ""
-        
-        response = MarketRegimeResponse(
-            regime=regime,
-            regime_emoji=regime_emoji,
-            reason=reason,
-            nepse_index=round(nepse_index, 2),
-            ema50=round(ema50, 2),
-            timestamp=datetime.now().isoformat(),
-        )
-        
-        # Cache the response
-        _market_regime_cache["data"] = response
-        _market_regime_cache["timestamp"] = datetime.now()
-        
-        return response
+        # First time - must fetch synchronously (but with short timeout)
+        logger.info("🔄 First fetch - getting market regime data...")
+        return await _fetch_market_regime_with_timeout()
         
     except Exception as e:
         logger.error(f"Market regime check failed: {e}")
-        # Return cached data if available, even if expired
-        if _market_regime_cache["data"]:
-            logger.warning("Returning stale cached data due to error")
-            return _market_regime_cache["data"]
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return safe default
+        return MarketRegimeResponse(
+            regime="BULL",
+            regime_emoji="",
+            reason="Market data unavailable",
+            nepse_index=0,
+            ema50=0,
+            timestamp=datetime.now().isoformat(),
+        )
+
+
+async def _refresh_market_regime_background():
+    """Refresh market regime in background."""
+    try:
+        response = await _fetch_market_regime_with_timeout()
+        _market_regime_cache["data"] = response
+        _market_regime_cache["timestamp"] = datetime.now()
+        logger.info("✅ Background refresh complete")
+    except Exception as e:
+        logger.error(f"Background refresh failed: {e}")
+
+
+async def _fetch_market_regime_with_timeout():
+    """Fetch market regime with 10 second timeout."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    
+    def fetch_regime_data():
+        """Fetch regime in thread."""
+        from analysis.master_screener import MasterStockScreener
+        from data.fetcher import NepseFetcher
+        
+        screener = MasterStockScreener(strategy="momentum")
+        regime, reason = screener.check_market_regime()
+        
+        fetcher = NepseFetcher()
+        index_df = fetcher.fetch_index_history(days=60)
+        
+        nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
+        ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
+        
+        return regime, reason, nepse_index, ema50
+    
+    # Run in thread pool with 10 second timeout
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as executor:
+        try:
+            regime, reason, nepse_index, ema50 = await asyncio.wait_for(
+                loop.run_in_executor(executor, fetch_regime_data),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⏱️ NEPSE API timeout (10s), using default values")
+            regime = "BULL"
+            reason = "Market data temporarily unavailable (NEPSE API timeout)"
+            nepse_index = 0
+            ema50 = 0
+    
+    return MarketRegimeResponse(
+        regime=regime,
+        regime_emoji="",
+        reason=reason,
+        nepse_index=round(nepse_index, 2),
+        ema50=round(ema50, 2),
+        timestamp=datetime.now().isoformat(),
+    )
 
 
 @router.get("/portfolio/status", response_model=PortfolioResponse)
