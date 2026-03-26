@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard,
   Search,
@@ -29,6 +30,7 @@ import {
   Scale,
   PanelLeftClose,
   PanelLeftOpen,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -46,7 +48,6 @@ interface NavGroup {
   defaultOpen?: boolean;
 }
 
-// Organized navigation matching paper_trader.py features
 const navigationGroups: NavGroup[] = [
   {
     name: 'Dashboard',
@@ -63,7 +64,7 @@ const navigationGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: 'Analyze Stock', href: '/analyze', icon: Search },
-      { name: 'Trading Signal', href: '/signal', icon: Zap, badge: 'NEW' },
+      { name: 'Trading Signal', href: '/signal', icon: Zap, badge: 'AI' },
       { name: 'Price Targets', href: '/price-targets', icon: Target },
       { name: 'Tech Score', href: '/tech-score', icon: Gauge },
       { name: 'Order Flow', href: '/order-flow', icon: LineChart },
@@ -74,7 +75,7 @@ const navigationGroups: NavGroup[] = [
     icon: Scale,
     defaultOpen: true,
     items: [
-      { name: 'Hold or Sell', href: '/hold-or-sell', icon: Scale, badge: 'NEW' },
+      { name: 'Hold or Sell', href: '/hold-or-sell', icon: Scale, badge: 'AI' },
       { name: 'IPO Exit Timing', href: '/ipo-exit', icon: Clock, badge: 'NEW' },
     ],
   },
@@ -84,7 +85,7 @@ const navigationGroups: NavGroup[] = [
     items: [
       { name: 'AI Scanner', href: '/scanner', icon: Brain },
       { name: 'Stealth Radar', href: '/stealth', icon: Radar },
-      { name: 'Trading Calendar', href: '/calendar', icon: Calendar, badge: 'NEW' },
+      { name: 'Trading Calendar', href: '/calendar', icon: Calendar },
     ],
   },
   {
@@ -114,69 +115,101 @@ function NavGroupComponent({ group, collapsed }: { group: NavGroup; collapsed: b
   
   const hasActiveItem = group.items.some(item => pathname === item.href);
   
-  // Auto-open group if it has an active item
-  if (hasActiveItem && !isOpen) {
-    setIsOpen(true);
-  }
+  useEffect(() => {
+    if (hasActiveItem) {
+      setIsOpen(true);
+    }
+  }, [hasActiveItem]);
 
   return (
-    <div className="mb-1">
+    <div className="mb-2">
       {!collapsed ? (
         <>
-          <button
+          <motion.button
             onClick={() => setIsOpen(!isOpen)}
             className={cn(
-              'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+              'nav-item flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
               hasActiveItem
-                ? 'bg-primary-muted/50 text-primary'
-                : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:bg-surface-2/80 hover:text-foreground'
             )}
+            whileHover={{ x: 2 }}
+            whileTap={{ scale: 0.98 }}
             title={group.name}
           >
-            <div className="flex items-center gap-2">
-              <group.icon className="h-4 w-4" />
+            <div className="flex items-center gap-2.5">
+              <group.icon className={cn(
+                'h-4 w-4 transition-colors',
+                hasActiveItem ? 'text-primary' : ''
+              )} />
               <span>{group.name}</span>
             </div>
-            {isOpen ? (
+            <motion.div
+              animate={{ rotate: isOpen ? 180 : 0 }}
+              transition={{ duration: 0.2 }}
+            >
               <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-          </button>
+            </motion.div>
+          </motion.button>
 
-          {isOpen && (
-            <div className="mt-1 ml-3 space-y-0.5 border-l border-border pl-3">
-              {group.items.map((item) => {
-                const isActive = pathname === item.href;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      'group flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-200',
-                      isActive
-                        ? 'bg-primary-muted text-primary font-medium'
-                        : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
-                    )}
-                  >
-                    <item.icon className={cn(
-                      'h-4 w-4 transition-colors',
-                      isActive ? 'text-primary' : 'group-hover:text-foreground'
-                    )} />
-                    <span className="flex-1">{item.name}</span>
-                    {item.badge && (
-                      <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-bold text-primary">
-                        {item.badge}
-                      </span>
-                    )}
-                    {isActive && (
-                      <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-glow-sm" />
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          )}
+          <AnimatePresence>
+            {isOpen && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-1 ml-3 space-y-0.5 border-l border-border/50 pl-3">
+                  {group.items.map((item, index) => {
+                    const isActive = pathname === item.href;
+                    return (
+                      <motion.div
+                        key={item.href}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.05 }}
+                      >
+                        <Link
+                          href={item.href}
+                          className={cn(
+                            'group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-all duration-200',
+                            isActive
+                              ? 'bg-primary/15 text-primary font-medium shadow-glow-sm'
+                              : 'text-muted-foreground hover:bg-surface-2/60 hover:text-foreground hover:translate-x-1'
+                          )}
+                        >
+                          <item.icon className={cn(
+                            'h-4 w-4 transition-all duration-200',
+                            isActive ? 'text-primary' : 'group-hover:text-foreground group-hover:scale-110'
+                          )} />
+                          <span className="flex-1">{item.name}</span>
+                          {item.badge && (
+                            <span className={cn(
+                              'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                              item.badge === 'AI' 
+                                ? 'bg-gradient-to-r from-primary/30 to-accent/30 text-primary border border-primary/20' 
+                                : 'bg-primary/20 text-primary'
+                            )}>
+                              {item.badge}
+                            </span>
+                          )}
+                          {isActive && (
+                            <motion.div 
+                              className="h-1.5 w-1.5 rounded-full bg-primary"
+                              layoutId="activeIndicator"
+                              transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                            />
+                          )}
+                        </Link>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </>
       ) : (
         <div className="space-y-1">
@@ -188,10 +221,10 @@ function NavGroupComponent({ group, collapsed }: { group: NavGroup; collapsed: b
                 href={item.href}
                 title={item.name}
                 className={cn(
-                  'flex w-full items-center justify-center rounded-lg px-2 py-2 transition-colors',
+                  'flex w-full items-center justify-center rounded-lg px-2 py-2.5 transition-all duration-200',
                   isActive
-                    ? 'bg-primary-muted text-primary'
-                    : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
+                    ? 'bg-primary/15 text-primary shadow-glow-sm'
+                    : 'text-muted-foreground hover:bg-surface-2/60 hover:text-foreground hover:scale-110'
                 )}
               >
                 <item.icon className="h-4 w-4" />
@@ -214,71 +247,157 @@ export function Sidebar() {
       setCollapsed(false);
     }
   }, []);
-  const widthClass = collapsed ? 'w-20' : 'w-64';
 
   return (
-    <aside className={cn('fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-surface-1 transition-all', widthClass)}>
+    <motion.aside
+      className={cn(
+        'fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border/50 transition-all duration-300',
+        collapsed ? 'w-20' : 'w-64'
+      )}
+      style={{
+        background: 'linear-gradient(180deg, rgba(20, 20, 22, 0.95) 0%, rgba(9, 9, 11, 0.98) 100%)',
+        backdropFilter: 'blur(20px)',
+      }}
+      initial={false}
+      animate={{ width: collapsed ? 80 : 256 }}
+      transition={{ duration: 0.3, ease: [0.25, 1, 0.5, 1] }}
+    >
+      {/* Gradient overlay at top */}
+      <div className="absolute inset-x-0 top-0 h-32 pointer-events-none" style={{ background: 'var(--gradient-sidebar)' }} />
+      
       {/* Logo */}
-      <div className={cn('flex h-16 items-center border-b border-border px-4', collapsed ? 'justify-center' : 'gap-3')}>
-        <div className="rounded-lg bg-gradient-to-br from-primary to-primary/60 p-2 shadow-glow-sm">
+      <div className={cn(
+        'relative flex h-16 items-center border-b border-border/50 px-4',
+        collapsed ? 'justify-center' : 'gap-3'
+      )}>
+        <motion.div 
+          className="relative rounded-xl bg-gradient-to-br from-primary to-accent p-2.5 shadow-glow-sm"
+          whileHover={{ scale: 1.05, rotate: 5 }}
+          whileTap={{ scale: 0.95 }}
+        >
           <Activity className="h-5 w-5 text-primary-foreground" />
-        </div>
-        {!collapsed && <div>
-          <h1 className="text-base font-bold tracking-tight text-foreground">NEPSE AI</h1>
-          <p className="text-[10px] text-muted-foreground">Trading Terminal v2.0</p>
-        </div>}
+          <div className="absolute inset-0 rounded-xl bg-white/10" />
+        </motion.div>
+        <AnimatePresence>
+          {!collapsed && (
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              transition={{ duration: 0.2 }}
+            >
+              <h1 className="text-base font-bold tracking-tight text-foreground flex items-center gap-1.5">
+                NEPSE AI
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+              </h1>
+              <p className="text-[10px] text-muted-foreground font-medium">Trading Terminal v2.0</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      <div className="border-b border-border p-2">
-        <button
+      {/* Collapse Toggle */}
+      <div className="border-b border-border/30 p-2">
+        <motion.button
           type="button"
           onClick={() => {
             setCollapsed((v) => {
               const next = !v;
               try {
                 window.localStorage.setItem('nepse-sidebar-collapsed-v1', next ? '1' : '0');
-              } catch {
-                // ignore storage write issues
-              }
+              } catch {}
               return next;
             });
           }}
-          className={cn('inline-flex w-full items-center rounded-lg px-2 py-2 text-sm text-muted-foreground hover:bg-surface-2 hover:text-foreground', collapsed ? 'justify-center' : 'gap-2')}
+          className={cn(
+            'inline-flex w-full items-center rounded-lg px-3 py-2 text-sm text-muted-foreground',
+            'hover:bg-surface-2/60 hover:text-foreground transition-all duration-200',
+            collapsed ? 'justify-center' : 'gap-2'
+          )}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-          {!collapsed && <span>Collapse</span>}
-        </button>
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                Collapse
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.button>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto p-3">
+      <nav className="flex-1 overflow-y-auto p-3 relative">
         {navigationGroups.map((group) => (
           <NavGroupComponent key={group.name} group={group} collapsed={collapsed} />
         ))}
       </nav>
 
       {/* Help Section */}
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border/30 p-3">
         <Link
           href="/help"
-          className={cn('flex items-center rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors', collapsed ? 'justify-center' : 'gap-2')}
-          title="Help & Docs"
+          className={cn(
+            'flex items-center rounded-lg px-3 py-2.5 text-sm text-muted-foreground',
+            'hover:bg-surface-2/60 hover:text-foreground transition-all duration-200',
+            collapsed ? 'justify-center' : 'gap-2'
+          )}
         >
           <HelpCircle className="h-4 w-4" />
-          {!collapsed && <span>Help & Docs</span>}
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                Help & Docs
+              </motion.span>
+            )}
+          </AnimatePresence>
         </Link>
       </div>
 
       {/* Footer */}
-      <div className="border-t border-border p-4">
-        <div className={cn('flex items-center text-xs text-muted-foreground', collapsed ? 'justify-center' : 'gap-2')}>
-          <div className="h-2 w-2 rounded-full bg-primary animate-pulse shadow-glow-sm" />
-          {!collapsed && <span>API Connected</span>}
+      <div className="border-t border-border/30 p-4">
+        <div className={cn(
+          'flex items-center text-xs',
+          collapsed ? 'justify-center' : 'gap-2'
+        )}>
+          <div className="status-dot online" />
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.span
+                className="text-muted-foreground"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                API Connected
+              </motion.span>
+            )}
+          </AnimatePresence>
         </div>
-        {!collapsed && <p className="mt-2 text-[10px] text-muted">v2.0.0 • Educational Use Only</p>}
+        <AnimatePresence>
+          {!collapsed && (
+            <motion.p
+              className="mt-2 text-[10px] text-muted"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              v2.0.0 • Educational Use Only
+            </motion.p>
+          )}
+        </AnimatePresence>
       </div>
-    </aside>
+    </motion.aside>
   );
 }

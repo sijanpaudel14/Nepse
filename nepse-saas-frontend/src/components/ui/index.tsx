@@ -2,6 +2,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { 
   Loader2, 
@@ -26,35 +27,47 @@ import {
 
 export function PageSkeleton() {
   return (
-    <div className="space-y-6 animate-pulse">
-      <div className="h-8 w-48 bg-muted/30 rounded-lg" />
-      <div className="h-4 w-96 bg-muted/20 rounded" />
+    <div className="space-y-6">
+      <div className="h-8 w-48 skeleton rounded-lg" />
+      <div className="h-4 w-96 skeleton rounded" />
       <div className="grid grid-cols-4 gap-4">
         {[1, 2, 3, 4].map(i => (
-          <div key={i} className="h-32 bg-muted/20 rounded-xl" />
+          <motion.div 
+            key={i} 
+            className="h-32 skeleton rounded-xl"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: i * 0.1 }}
+          />
         ))}
       </div>
-      <div className="h-96 bg-muted/20 rounded-xl" />
+      <div className="h-96 skeleton rounded-xl" />
     </div>
   );
 }
 
 export function CardSkeleton({ className }: { className?: string }) {
   return (
-    <div className={cn('animate-pulse rounded-xl border border-border bg-card p-6', className)}>
-      <div className="h-4 w-24 bg-muted/30 rounded mb-4" />
-      <div className="h-8 w-32 bg-muted/20 rounded mb-2" />
-      <div className="h-3 w-48 bg-muted/10 rounded" />
+    <div className={cn('rounded-xl border border-border/60 p-6', className)} style={{ background: 'var(--glass-bg)' }}>
+      <div className="h-4 w-24 skeleton rounded mb-4" />
+      <div className="h-8 w-32 skeleton rounded mb-2" />
+      <div className="h-3 w-48 skeleton rounded" />
     </div>
   );
 }
 
 export function TableSkeleton({ rows = 5 }: { rows?: number }) {
   return (
-    <div className="animate-pulse space-y-3">
-      <div className="h-10 bg-muted/20 rounded-lg" />
+    <div className="space-y-3">
+      <div className="h-10 skeleton rounded-lg" />
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-12 bg-muted/10 rounded-lg" />
+        <motion.div 
+          key={i} 
+          className="h-12 skeleton rounded-lg"
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: i * 0.05 }}
+        />
       ))}
     </div>
   );
@@ -67,7 +80,7 @@ export function LoadingSpinner({ size = 'md', className }: { size?: 'sm' | 'md' 
     lg: 'h-8 w-8',
   };
   
-  return <Loader2 className={cn('animate-spin', sizeClasses[size], className)} />;
+  return <Loader2 className={cn('animate-spin text-primary', sizeClasses[size], className)} />;
 }
 
 // ============== VERDICT BADGES ==============
@@ -115,9 +128,9 @@ export function VerdictBadge({ verdict, size = 'md' }: { verdict: string; size?:
   const Icon = config.icon;
   
   const sizeClasses = {
-    sm: 'px-2 py-0.5 text-xs gap-1',
-    md: 'px-3 py-1 text-sm gap-1.5',
-    lg: 'px-4 py-2 text-base gap-2',
+    sm: 'px-2.5 py-1 text-xs gap-1',
+    md: 'px-3.5 py-1.5 text-sm gap-1.5',
+    lg: 'px-5 py-2.5 text-base gap-2',
   };
   
   const iconSizes = {
@@ -127,15 +140,24 @@ export function VerdictBadge({ verdict, size = 'md' }: { verdict: string; size?:
   };
   
   return (
-    <span className={cn(
-      'inline-flex items-center rounded-full font-semibold',
-      config.bg,
-      config.text,
-      sizeClasses[size]
-    )}>
-      <Icon className={iconSizes[size]} />
+    <motion.span 
+      className={cn(
+        'inline-flex items-center rounded-full font-semibold border backdrop-blur-sm',
+        config.bg,
+        config.text,
+        sizeClasses[size],
+        verdict.includes('BUY') || verdict === 'BULLISH' ? 'border-bull/30 shadow-glow-sm' :
+        verdict.includes('SELL') || verdict.includes('EXIT') || verdict === 'BEARISH' ? 'border-bear/30' :
+        'border-white/10'
+      )}
+      initial={{ scale: 0.9, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.2 }}
+      whileHover={{ scale: 1.05 }}
+    >
+      <Icon className={cn(iconSizes[size], 'animate-pulse')} />
       {verdict.replace(/_/g, ' ')}
-    </span>
+    </motion.span>
   );
 }
 
@@ -157,10 +179,12 @@ export function ScoreCircle({
   const strokeDashoffset = circumference - (percentage / 100) * circumference;
   
   const getColor = (pct: number) => {
-    if (pct >= 70) return 'stroke-bull';
-    if (pct >= 40) return 'stroke-warning';
-    return 'stroke-bear';
+    if (pct >= 70) return { stroke: 'stroke-bull', glow: 'drop-shadow(0 0 8px rgba(16, 185, 129, 0.5))' };
+    if (pct >= 40) return { stroke: 'stroke-warning', glow: 'drop-shadow(0 0 8px rgba(217, 119, 6, 0.4))' };
+    return { stroke: 'stroke-bear', glow: 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.4))' };
   };
+  
+  const colorConfig = getColor(percentage);
   
   const sizeClasses = {
     sm: { container: 'h-16 w-16', text: 'text-lg', label: 'text-[10px]' },
@@ -169,7 +193,12 @@ export function ScoreCircle({
   };
   
   return (
-    <div className={cn('relative', sizeClasses[size].container)}>
+    <motion.div 
+      className={cn('relative', sizeClasses[size].container)}
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.4, ease: 'easeOut' }}
+    >
       <svg className="h-full w-full -rotate-90" viewBox="0 0 100 100">
         <circle
           cx="50"
@@ -180,7 +209,7 @@ export function ScoreCircle({
           strokeWidth="8"
           className="text-muted/20"
         />
-        <circle
+        <motion.circle
           cx="50"
           cy="50"
           r="40"
@@ -188,17 +217,27 @@ export function ScoreCircle({
           strokeWidth="8"
           strokeLinecap="round"
           strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          className={cn('transition-all duration-500', getColor(percentage))}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset }}
+          transition={{ duration: 1, ease: 'easeOut', delay: 0.2 }}
+          className={colorConfig.stroke}
+          style={{ filter: colorConfig.glow }}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className={cn('font-bold', sizeClasses[size].text)}>{Math.round(score)}</span>
+        <motion.span 
+          className={cn('font-bold tabular-nums', sizeClasses[size].text)}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+        >
+          {Math.round(score)}
+        </motion.span>
         {label && (
           <span className={cn('text-muted-foreground', sizeClasses[size].label)}>{label}</span>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
