@@ -9,7 +9,7 @@ Azure Static Web Apps isn't available in your allowed regions. Using **Azure Sto
 
 ### Step 1: Make sure your backend is deployed
 ```bash
-az containerapp show -n nepse-api -g rg-nepse -q "properties.configuration.ingress.fqdn" -o tsv
+az containerapp show -n nepse-api -g rg-nepse-trading -q "properties.configuration.ingress.fqdn" -o tsv
 ```
 If this shows a URL, your backend is ready ✅
 
@@ -61,7 +61,7 @@ cat docs/guides/AZURE_STORAGE_CDN_SSL.md
 Or run these commands:
 
 ```bash
-RG="rg-nepse"
+RG="rg-nepse-trading"
 STORAGE_NAME=$(cat /tmp/nepse-storage-name)
 
 # Create CDN
@@ -120,7 +120,7 @@ This rebuilds and redeploys in ~2 minutes.
 
 ## ✅ Your Checklist
 
-- [ ] Backend deployed (`az containerapp show -n nepse-api -g rg-nepse`)
+- [ ] Backend deployed (`az containerapp show -n nepse-api -g rg-nepse-trading`)
 - [ ] Run `./deploy-frontend-storage.sh`
 - [ ] Test the storage URL in browser
 - [ ] Add DNS CNAME record for custom domain

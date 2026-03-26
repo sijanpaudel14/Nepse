@@ -1,0 +1,90 @@
+name: Deploy Backend to Azure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'nepse_ai_trading/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AZURE_RESOURCE_GROUP: rg-nepse
+  CONTAINER_APP_NAME: nepse-api
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build and push Docker image
+        run: |
+          # Login to ACR
+          az acr login --name ${{ secrets.ACR_NAME }}
+          
+          # Build image with git SHA tag
+          cd nepse_ai_trading
+          docker build -t nepse-api:${{ github.sha }} .
+          docker tag nepse-api:${{ github.sha }} ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:${{ github.sha }}
+          docker tag nepse-api:${{ github.sha }} ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:latest
+          
+          # Push both tags
+          docker push ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:${{ github.sha }}
+          docker push ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:latest
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:${{ github.sha }}
+
+      - name: Verify deployment
+        run: |
+          # Wait for deployment
+          sleep 30
+          
+          # Get app URL
+          APP_URL=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          
+          # Health check
+          echo "Testing health endpoint: https://$APP_URL/health"
+          curl -f https://$APP_URL/health || exit 1
+          
+          echo "✅ Backend deployment successful!"
+          echo "URL: https://$APP_URL"
+
+      - name: Post deployment summary
+        if: success()
+        run: |
+          APP_URL=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          
+          echo "### 🚀 Backend Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **API URL:** https://$APP_URL" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "### ❌ Backend Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs for details." >> $GITHUB_STEP_SUMMARY

@@ -30,6 +30,7 @@ from core.database import SessionLocal, Stock, DailyPrice, Signal as TradingSign
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "web" / "templates"
 STATIC_DIR = BASE_DIR / "web" / "static"
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # Create FastAPI app
 app = FastAPI(
@@ -75,10 +76,12 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.exist
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # Next.js dev server
+        "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "http://localhost:8000",  # FastAPI docs
-        "*",  # TODO: Restrict in production to your domain
+        "http://localhost:8000",
+        FRONTEND_URL,
+        "https://*.z12.web.core.windows.net",  # Azure Storage
+        "https://*.azureedge.net",  # Azure CDN
     ],
     allow_credentials=True,
     allow_methods=["*"],

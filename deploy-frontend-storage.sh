@@ -18,7 +18,7 @@ echo -e "${BLUE}   NEPSE Frontend - Storage Deployment${NC}"
 echo -e "${BLUE}================================================${NC}"
 
 # Configuration
-RG="rg-nepse"
+RG="rg-nepse-trading"
 STORAGE_NAME="nepsestorage$(date +%s | tail -c 8)"
 LOCATION="koreacentral"  # Allowed by policy
 

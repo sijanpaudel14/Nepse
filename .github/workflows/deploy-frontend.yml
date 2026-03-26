@@ -1,0 +1,126 @@
+name: Deploy Frontend to Azure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'nepse-saas-frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AZURE_RESOURCE_GROUP: rg-nepse
+  STORAGE_ACCOUNT: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+          cache-dependency-path: nepse-saas-frontend/yarn.lock
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get Backend URL
+        id: backend
+        run: |
+          BACKEND_URL=$(az containerapp show \
+            --name nepse-api \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "url=https://$BACKEND_URL" >> $GITHUB_OUTPUT
+          echo "Backend URL: https://$BACKEND_URL"
+
+      - name: Build Frontend
+        working-directory: nepse-saas-frontend
+        env:
+          NEXT_PUBLIC_API_URL: ${{ steps.backend.outputs.url }}
+          BUILD_MODE: static
+        run: |
+          # Install dependencies
+          yarn install --frozen-lockfile
+          
+          # Create production env
+          echo "NEXT_PUBLIC_API_URL=${{ steps.backend.outputs.url }}" > .env.production
+          
+          # Build static export
+          yarn build
+          
+          # Verify build
+          ls -la out/
+
+      - name: Deploy to Azure Storage
+        working-directory: nepse-saas-frontend
+        run: |
+          # Upload to $web container
+          az storage blob upload-batch \
+            --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
+            --auth-mode login \
+            --destination '$web' \
+            --source ./out \
+            --overwrite \
+            --pattern '*'
+          
+          echo "✅ Files uploaded to Azure Storage"
+
+      - name: Purge CDN Cache (if exists)
+        continue-on-error: true
+        run: |
+          # Try to purge CDN cache (will fail gracefully if CDN doesn't exist)
+          az cdn endpoint purge \
+            --name nepse \
+            --profile-name nepse-cdn \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --content-paths "/*" \
+            --no-wait || echo "No CDN found or purge failed (not critical)"
+
+      - name: Get Frontend URL
+        id: frontend
+        run: |
+          FRONTEND_URL=$(az storage account show \
+            --name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "primaryEndpoints.web" -o tsv)
+          echo "url=$FRONTEND_URL" >> $GITHUB_OUTPUT
+          echo "Frontend URL: $FRONTEND_URL"
+
+      - name: Verify deployment
+        run: |
+          # Wait for propagation
+          sleep 10
+          
+          # Test frontend is accessible
+          curl -f ${{ steps.frontend.outputs.url }} || exit 1
+          
+          echo "✅ Frontend deployment successful!"
+
+      - name: Post deployment summary
+        if: success()
+        run: |
+          echo "### 🎨 Frontend Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend URL:** ${{ steps.frontend.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend API:** ${{ steps.backend.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎉 Your app is live!" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "### ❌ Frontend Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs for details." >> $GITHUB_STEP_SUMMARY
