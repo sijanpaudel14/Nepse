@@ -10,6 +10,12 @@ This is the main API entry point that provides:
 Future: Will support multi-user authentication for SaaS.
 """
 
+# Apply HTTP/2 patch BEFORE any nepse imports (Docker compatibility)
+try:
+    from http2_patch import *
+except ImportError:
+    pass  # Patch not needed on localhost
+
 import os
 from pathlib import Path
 from datetime import date, datetime

@@ -49,6 +49,9 @@ RUN mkdir -p /app/data
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Force HTTP/1.1 for httpx (HTTP/2 has issues in Docker with NEPSE API)
+ENV HTTPX_HTTP2=0
+
 # Expose port for FastAPI
 EXPOSE 8000
 
