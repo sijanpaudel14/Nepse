@@ -1,5 +1,8 @@
 # nePSE AI Trading Bot - Dependencies
 # =====================================
+# NepseUnofficialApi (local package - must be first)
+git+https://github.com/basic-bgnr/NepseUnofficialApi
+
 # Core Data Processing
 pandas>=2.2.3
 numpy>=1.26.4

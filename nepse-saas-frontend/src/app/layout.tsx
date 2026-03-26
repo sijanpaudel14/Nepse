@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Providers } from '@/components/Providers';
 import { MainShell } from '@/components/MainShell';
+import AuthProvider from '@/components/AuthProvider';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' });
@@ -23,9 +24,11 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}>
-        <Providers>
-          <MainShell>{children}</MainShell>
-        </Providers>
+        <AuthProvider>
+          <Providers>
+            <MainShell>{children}</MainShell>
+          </Providers>
+        </AuthProvider>
       </body>
     </html>
   );

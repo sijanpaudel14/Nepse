@@ -363,6 +363,34 @@ export function Sidebar() {
             )}
           </AnimatePresence>
         </Link>
+        
+        {/* Logout Button */}
+        <button
+          onClick={() => {
+            localStorage.removeItem('nepse_auth_token');
+            window.location.reload();
+          }}
+          className={cn(
+            'w-full flex items-center rounded-lg px-3 py-2.5 text-sm text-red-400 mt-2',
+            'hover:bg-red-500/10 hover:text-red-300 transition-all duration-200',
+            collapsed ? 'justify-center' : 'gap-2'
+          )}
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.span
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                Logout
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </button>
       </div>
 
       {/* Footer */}
