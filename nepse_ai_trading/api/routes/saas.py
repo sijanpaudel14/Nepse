@@ -853,38 +853,45 @@ async def get_market_regime():
         
         logger.info("🔄 Fetching fresh market regime data...")
         
-        from analysis.master_screener import MasterStockScreener
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
         
-        screener = MasterStockScreener(strategy="momentum")
-        regime, reason = screener.check_market_regime()
-        
-        # Get NEPSE index data
-        from data.fetcher import NepseFetcher
-        fetcher = NepseFetcher()
-        
-        # Add timeout protection
-        import signal
-        
-        def timeout_handler(signum, frame):
-            raise TimeoutError("NEPSE API timeout")
-        
-        nepse_index = 0
-        ema50 = 0
-        
-        try:
-            # Set 30 second timeout for NEPSE API call
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(30)
+        def fetch_regime_data():
+            """Fetch regime in thread with timeout."""
+            from analysis.master_screener import MasterStockScreener
+            from data.fetcher import NepseFetcher
             
+            screener = MasterStockScreener(strategy="momentum")
+            regime, reason = screener.check_market_regime()
+            
+            fetcher = NepseFetcher()
             index_df = fetcher.fetch_index_history(days=60)
-            
-            signal.alarm(0)  # Cancel alarm
             
             nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
             ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
-        except (TimeoutError, Exception) as e:
-            logger.warning(f"NEPSE API timeout/error: {e}, using cached/default values")
-            signal.alarm(0)  # Cancel alarm
+            
+            return regime, reason, nepse_index, ema50
+        
+        # Run in thread pool with 15 second timeout
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            try:
+                regime, reason, nepse_index, ema50 = await asyncio.wait_for(
+                    loop.run_in_executor(executor, fetch_regime_data),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("⏱️ NEPSE API timeout (15s), returning default values")
+                # Return cached if available, otherwise default
+                if _market_regime_cache["data"]:
+                    logger.info("Returning stale cache due to timeout")
+                    return _market_regime_cache["data"]
+                
+                # Default safe values
+                regime = "BULL"
+                reason = "Market data unavailable (timeout)"
+                nepse_index = 0
+                ema50 = 0
         
         regime_emoji = ""
         
