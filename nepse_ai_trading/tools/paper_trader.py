@@ -3711,6 +3711,25 @@ def main():
         metavar="SYMBOL",
         help="📈 Analyze IPO exit signals for newly listed stock (when to sell IPOs)"
     )
+    parser.add_argument(
+        "--hold-or-sell",
+        type=str,
+        default=None,
+        metavar="SYMBOL",
+        help="📊 Analyze existing position: Should you HOLD or SELL? (use with --buy-price)"
+    )
+    parser.add_argument(
+        "--buy-price",
+        type=float,
+        default=None,
+        help="Your purchase price for --hold-or-sell analysis (required)"
+    )
+    parser.add_argument(
+        "--buy-date",
+        type=str,
+        default=None,
+        help="Your purchase date (YYYY-MM-DD) for --hold-or-sell analysis (optional)"
+    )
 
     args = parser.parse_args()
 
@@ -4262,6 +4281,33 @@ def main():
         
         analyzer = IPOExitAnalyzer()
         result = analyzer.analyze(symbol)
+        print(result.format_report())
+        sys.exit(0)
+    
+    if args.hold_or_sell:
+        from intelligence.position_advisor import PositionAdvisor
+        
+        symbol = args.hold_or_sell.upper()
+        
+        # Validate required buy_price
+        if args.buy_price is None:
+            print("\n❌ ERROR: --buy-price is required for --hold-or-sell analysis")
+            print("   Usage: python paper_trader.py --hold-or-sell NABIL --buy-price 500")
+            print("   Optional: --buy-date 2025-12-01")
+            sys.exit(1)
+        
+        buy_price = args.buy_price
+        buy_date = args.buy_date
+        
+        print(f"\n📊 Analyzing your position in {symbol}...")
+        if buy_date:
+            print(f"   Bought at Rs. {buy_price:.2f} on {buy_date}")
+        else:
+            print(f"   Bought at Rs. {buy_price:.2f}")
+        print()
+        
+        advisor = PositionAdvisor()
+        result = advisor.analyze(symbol, buy_price=buy_price, buy_date=buy_date)
         print(result.format_report())
         sys.exit(0)
     
