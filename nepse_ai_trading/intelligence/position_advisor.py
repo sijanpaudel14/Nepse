@@ -382,11 +382,19 @@ class PositionAdvisor:
             result.verdict_text = "INSUFFICIENT DATA - Hold and monitor manually"
             return result
         
-        # Get current price
+        # Get current price - prefer real-time LTP over historical close
         if current_price:
             result.current_price = current_price
         else:
-            result.current_price = float(df['close'].iloc[-1])
+            # Try to get real-time LTP first
+            realtime_ltp = self._fetch_realtime_ltp(symbol)
+            if realtime_ltp and realtime_ltp > 0:
+                result.current_price = realtime_ltp
+                logger.info(f"📊 Using real-time LTP: Rs. {realtime_ltp}")
+            else:
+                # Fallback to last close from historical data
+                result.current_price = float(df['close'].iloc[-1])
+                result.warnings.append("Using yesterday's close (market may be closed)")
         
         # Calculate P/L
         result.pnl_amount = result.current_price - result.buy_price
@@ -439,6 +447,34 @@ class PositionAdvisor:
                     return df
         except Exception as e:
             logger.debug(f"ShareHub failed: {e}")
+        
+        return None
+    
+    def _fetch_realtime_ltp(self, symbol: str) -> Optional[float]:
+        """Fetch real-time Last Traded Price (LTP) for today."""
+        # Method 1: Try NepseFetcher's live market data (most reliable)
+        try:
+            if self.fetcher:
+                live_df = self.fetcher.fetch_live_market()
+                if live_df is not None and not live_df.empty:
+                    symbol_upper = symbol.upper()
+                    match = live_df[live_df['symbol'].str.upper() == symbol_upper]
+                    if not match.empty:
+                        # 'close' in live market is actually the LTP
+                        ltp = match.iloc[0].get('close') or match.iloc[0].get('ltp')
+                        if ltp and float(ltp) > 0:
+                            return float(ltp)
+        except Exception as e:
+            logger.debug(f"Live market failed: {e}")
+        
+        # Method 2: Try ShareHub real-time quote
+        try:
+            if self.sharehub:
+                quote = self.sharehub.get_stock_quote(symbol)
+                if quote and hasattr(quote, 'ltp') and quote.ltp > 0:
+                    return float(quote.ltp)
+        except Exception as e:
+            logger.debug(f"ShareHub quote failed: {e}")
         
         return None
     
@@ -938,34 +974,38 @@ class PositionAdvisor:
             hold_checklist.append("No major resistance until target")
         
         # ==== STOP LOSS CALCULATION ====
+        # NOTE: NEPSE has frequent "shakeouts" where operators push price 2-3% below
+        # support to trigger retail panic before pumping back. Use 5% buffer minimum.
         
         # Stop loss logic based on holding period and P/L
         if holding in [HoldingPeriod.VERY_SHORT, HoldingPeriod.SHORT]:
-            # Short term: tight stops
+            # Short term: moderate stops (NEPSE needs wider buffer for shakeouts)
             if pnl > 5:
                 # In profit: stop just below entry
-                result.stop_loss = result.buy_price * 0.99
+                result.stop_loss = result.buy_price * 0.97  # 3% below entry
             else:
-                # Flat or loss: stop below immediate support
-                result.stop_loss = min(result.support_resistance.immediate_support * 0.98,
-                                      result.buy_price * 0.95)
+                # Flat or loss: stop 5% below immediate support (survive shakeouts)
+                result.stop_loss = min(result.support_resistance.immediate_support * 0.95,
+                                      result.buy_price * 0.93)
         elif holding == HoldingPeriod.MEDIUM:
             # Medium term: moderate stops
             if pnl > 10:
                 # Good profit: lock in some gains
                 result.stop_loss = result.buy_price * 1.03  # 3% above entry
             elif pnl > 0:
-                result.stop_loss = result.buy_price * 0.98
+                result.stop_loss = result.buy_price * 0.95  # 5% below entry
             else:
-                result.stop_loss = result.support_resistance.immediate_support * 0.97
+                # 5% below support for NEPSE shakeout protection
+                result.stop_loss = result.support_resistance.immediate_support * 0.95
         else:
             # Long term: wider stops
             if pnl > 20:
                 result.stop_loss = result.buy_price * 1.10  # Lock 10% profit
             elif pnl > 0:
-                result.stop_loss = result.buy_price * 0.95
+                result.stop_loss = result.buy_price * 0.93  # 7% below entry
             else:
-                result.stop_loss = result.support_resistance.strong_support * 0.97
+                # 5% below strong support for NEPSE
+                result.stop_loss = result.support_resistance.strong_support * 0.95
         
         # ==== TARGETS ====
         
@@ -973,10 +1013,14 @@ class PositionAdvisor:
         result.target_2 = result.support_resistance.strong_resistance
         
         # ==== EXIT TRIGGERS ====
+        # NOTE: In NEPSE bull runs (Hydropower, Microfinance), RSI can stay overbought
+        # for weeks. Dropping from 75 to 49 is often just consolidation, not reversal.
+        # Use RSI < 60 for overbought stocks to lock profits before real crash.
         
         exit_triggers.append(f"Price closes below Rs. {result.stop_loss:.2f}")
         if result.technical.rsi > 70:
-            exit_triggers.append("RSI drops below 50 (momentum loss)")
+            # Overbought: exit earlier at RSI 60 (NEPSE-specific)
+            exit_triggers.append("RSI drops below 60 (momentum weakening)")
         else:
             exit_triggers.append("RSI drops below 40 (weak momentum)")
         exit_triggers.append("Heavy volume on a red day (distribution)")

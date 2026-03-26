@@ -299,6 +299,34 @@ class IPOExitAnalyzer:
         self.fetcher = fetcher or (NepseFetcher() if NepseFetcher else None)
         self.sharehub = sharehub or (ShareHubAPI() if ShareHubAPI else None)
     
+    def _fetch_realtime_ltp(self, symbol: str) -> Optional[float]:
+        """Fetch real-time Last Traded Price (LTP) for today."""
+        # Method 1: Try NepseFetcher's live market data (most reliable)
+        try:
+            if self.fetcher:
+                live_df = self.fetcher.fetch_live_market()
+                if live_df is not None and not live_df.empty:
+                    symbol_upper = symbol.upper()
+                    match = live_df[live_df['symbol'].str.upper() == symbol_upper]
+                    if not match.empty:
+                        # 'close' in live market is actually the LTP
+                        ltp = match.iloc[0].get('close') or match.iloc[0].get('ltp')
+                        if ltp and float(ltp) > 0:
+                            return float(ltp)
+        except Exception as e:
+            logger.debug(f"Live market failed: {e}")
+        
+        # Method 2: Try ShareHub real-time quote
+        try:
+            if self.sharehub:
+                quote = self.sharehub.get_stock_quote(symbol)
+                if quote and hasattr(quote, 'ltp') and quote.ltp > 0:
+                    return float(quote.ltp)
+        except Exception as e:
+            logger.debug(f"ShareHub quote failed: {e}")
+        
+        return None
+    
     def analyze(
         self,
         symbol: str,
@@ -331,10 +359,18 @@ class IPOExitAnalyzer:
             result.warnings.append("Need at least 3 days of trading data")
             return result
         
-        # 2. Basic metrics
+        # 2. Basic metrics - use real-time LTP if available
         result.days_since_listing = len(df)
-        result.current_price = float(df.iloc[-1]["close"])
         result.listing_price = float(df.iloc[0]["close"])  # Day 1 close
+        
+        # Try to get real-time LTP instead of yesterday's close
+        realtime_ltp = self._fetch_realtime_ltp(symbol)
+        if realtime_ltp and realtime_ltp > 0:
+            result.current_price = realtime_ltp
+            logger.info(f"📊 Using real-time LTP: Rs. {realtime_ltp}")
+        else:
+            result.current_price = float(df.iloc[-1]["close"])
+        
         result.gain_from_listing_pct = (result.current_price / result.listing_price - 1) * 100
         
         # 3. Analyze volume patterns
