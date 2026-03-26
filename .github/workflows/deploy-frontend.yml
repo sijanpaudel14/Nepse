@@ -64,10 +64,16 @@ jobs:
       - name: Deploy to Azure Storage
         working-directory: nepse-saas-frontend
         run: |
-          # Upload to $web container
+          # Get storage account key
+          STORAGE_KEY=$(az storage account keys list \
+            --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "[0].value" -o tsv)
+          
+          # Upload to $web container using account key
           az storage blob upload-batch \
             --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
-            --auth-mode login \
+            --account-key "$STORAGE_KEY" \
             --destination '$web' \
             --source ./out \
             --overwrite \
