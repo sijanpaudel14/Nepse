@@ -16,6 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
+# Install NepseUnofficialApi with --no-deps to avoid tqdm version conflict
+# (nepse wants tqdm==4.66.5, but pandas-ta needs tqdm>=4.67.1)
+RUN pip install --no-cache-dir --user --no-deps git+https://github.com/basic-bgnr/NepseUnofficialApi
+
 # Stage 2: Runtime stage
 FROM python:3.12-slim
 
