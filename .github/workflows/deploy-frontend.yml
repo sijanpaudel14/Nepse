@@ -10,7 +10,7 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
-  AZURE_RESOURCE_GROUP: rg-nepse
+  AZURE_RESOURCE_GROUP: rg-nepse-trading
   STORAGE_ACCOUNT: ${{ secrets.STORAGE_ACCOUNT_NAME }}
 
 jobs:

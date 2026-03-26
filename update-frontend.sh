@@ -14,7 +14,7 @@ echo -e "${BLUE}   NEPSE Frontend - Update Deployment${NC}"
 echo -e "${BLUE}================================================${NC}"
 
 # Configuration
-RG="rg-nepse"
+RG="rg-nepse-trading"
 
 # Check if storage name exists
 if [ ! -f /tmp/nepse-storage-name ]; then

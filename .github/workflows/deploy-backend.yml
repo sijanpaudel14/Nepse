@@ -10,7 +10,7 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
-  AZURE_RESOURCE_GROUP: rg-nepse
+  AZURE_RESOURCE_GROUP: rg-nepse-trading
   CONTAINER_APP_NAME: nepse-api
   ACR_NAME: ${{ secrets.ACR_NAME }}
 

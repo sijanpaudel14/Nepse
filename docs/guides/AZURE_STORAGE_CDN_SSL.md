@@ -17,7 +17,7 @@ Use Azure CDN (Standard Microsoft) - Adds ~$2/month but provides:
 
 ```bash
 # Variables
-RG="rg-nepse"
+RG="rg-nepse-trading"
 STORAGE_NAME=$(cat /tmp/nepse-storage-name)  # From previous deployment
 
 # Create CDN profile (Standard Microsoft - cheapest with SSL)
@@ -121,7 +121,7 @@ az cdn custom-domain show \
 
 set -e
 
-RG="rg-nepse"
+RG="rg-nepse-trading"
 STORAGE_NAME=$(cat /tmp/nepse-storage-name)
 CUSTOM_DOMAIN="nepse.sijanpaudel.com.np"
 
@@ -189,7 +189,7 @@ echo "  https://$CUSTOM_DOMAIN"
 
 set -e
 
-RG="rg-nepse"
+RG="rg-nepse-trading"
 STORAGE_NAME=$(cat /tmp/nepse-storage-name)
 
 # Rebuild

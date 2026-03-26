@@ -16,7 +16,7 @@ echo -e "${BLUE}   GitHub Actions Setup Helper${NC}"
 echo -e "${BLUE}================================================${NC}"
 echo ""
 
-RG="rg-nepse"
+RG="rg-nepse-trading"
 
 # Step 1: Get Subscription ID
 echo -e "${GREEN}[1/4]${NC} Getting Azure Subscription..."
@@ -40,7 +40,7 @@ echo "✓ Service Principal created"
 # Step 3: Get Resource Names
 echo -e "\n${GREEN}[3/4]${NC} Getting Azure resource names..."
 
-ACR_NAME=$(az acr list -g $RG --query "[0].name" -o tsv 2>/dev/null || echo "")
+ACR_NAME=$(az acr list --resource-group $RG --query "[0].name" -o tsv 2>/dev/null || echo "")
 if [ -z "$ACR_NAME" ]; then
     echo "  ⚠ Warning: ACR not found. Create it first."
     ACR_NAME="<YOUR_ACR_NAME>"
@@ -48,7 +48,7 @@ fi
 
 STORAGE_NAME=$(cat /tmp/nepse-storage-name 2>/dev/null || echo "")
 if [ -z "$STORAGE_NAME" ]; then
-    STORAGE_NAME=$(az storage account list -g $RG --query "[0].name" -o tsv 2>/dev/null || echo "")
+    STORAGE_NAME=$(az storage account list --resource-group $RG --query "[0].name" -o tsv 2>/dev/null || echo "")
 fi
 if [ -z "$STORAGE_NAME" ]; then
     echo "  ⚠ Warning: Storage account not found. Deploy frontend first."

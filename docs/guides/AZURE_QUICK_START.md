@@ -23,7 +23,7 @@ az login
 cd /run/media/sijanpaudel/New\ Volume/Nepse
 
 # Set variables
-export RG="rg-nepse"
+export RG="rg-nepse-trading"
 export LOC="southeastasia"
 export ACR="nepseacr$(whoami | md5sum | head -c 6)"
 

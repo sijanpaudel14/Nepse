@@ -44,13 +44,14 @@ app.add_middleware(
 
 ```bash
 # Get your storage URL
+# Get your storage URL
 STORAGE_NAME=$(cat /tmp/nepse-storage-name)
 FRONTEND_URL="https://$STORAGE_NAME.z12.web.core.windows.net"
 
-# Update Container App
+# Update Container App (automatically creates a new revision)
 az containerapp update \
   --name nepse-api \
-  --resource-group rg-nepse \
+  --resource-group rg-nepse-trading \
   --set-env-vars "FRONTEND_URL=$FRONTEND_URL"
 
 # Restart to apply changes
@@ -105,7 +106,7 @@ Run this to update backend CORS and restart:
 
 ```bash
 #!/bin/bash
-RG="rg-nepse"
+RG="rg-nepse-trading"
 STORAGE_NAME=$(cat /tmp/nepse-storage-name)
 
 # Update backend with frontend URL

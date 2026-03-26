@@ -13,12 +13,12 @@ echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}   Fixing Backend CORS${NC}"
 echo -e "${BLUE}================================================${NC}"
 
-RG="rg-nepse"
+RG="rg-nepse-trading"
 
 # Get URLs
 echo -e "\n${GREEN}[1/3]${NC} Getting deployment URLs..."
-BACKEND_URL=$(az containerapp show -n nepse-api -g $RG -q "properties.configuration.ingress.fqdn" -o tsv)
-STORAGE_NAME=$(cat /tmp/nepse-storage-name 2>/dev/null || az storage account list -g $RG -q "[0].name" -o tsv)
+BACKEND_URL=$(az containerapp show -n nepse-api -g $RG --query "properties.configuration.ingress.fqdn" -o tsv)
+STORAGE_NAME=$(cat /tmp/nepse-storage-name 2>/dev/null || az storage account list -g $RG --query "[0].name" -o tsv)
 FRONTEND_URL="https://$STORAGE_NAME.z12.web.core.windows.net"
 
 echo "Backend: https://$BACKEND_URL"

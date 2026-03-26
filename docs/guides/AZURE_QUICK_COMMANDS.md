@@ -48,7 +48,7 @@ az storage account update \
 
 ### Quick Method
 ```bash
-RG="rg-nepse"
+RG="rg-nepse-trading"
 STORAGE_NAME=$(cat /tmp/nepse-storage-name)
 
 # Create CDN
