@@ -8,7 +8,7 @@ Provides clean JSON endpoints for:
 - Single Stock Analysis
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 import math
 
@@ -1105,3 +1105,374 @@ async def add_to_portfolio(
     except Exception as e:
         logger.error(f"Buy failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== NEW ENDPOINTS: Signal, IPO Exit, Hold-or-Sell, Calendar ==============
+
+class SignalResponse(BaseModel):
+    """Trading signal response."""
+    success: bool
+    timestamp: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class IPOExitResponse(BaseModel):
+    """IPO exit analysis response."""
+    success: bool
+    timestamp: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class PositionAdviceResponse(BaseModel):
+    """Hold or sell position advice response."""
+    success: bool
+    timestamp: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class CalendarResponse(BaseModel):
+    """Trading calendar response."""
+    success: bool
+    timestamp: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class SmartMoneyResponse(BaseModel):
+    """Smart money tracker response."""
+    success: bool
+    timestamp: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class HeatmapResponse(BaseModel):
+    """Market heatmap response."""
+    success: bool
+    timestamp: str
+    data: Optional[Dict[str, Any]] = None
+
+
+@router.get("/signal/{symbol}", response_model=SignalResponse)
+async def get_trading_signal(symbol: str):
+    """Generate a complete trading signal for a stock."""
+    try:
+        from nepse_ai_trading.data.fetcher import NepseFetcher
+        from nepse_ai_trading.engines.signal_engine import TechnicalSignalEngine
+        
+        fetcher = NepseFetcher()
+        engine = TechnicalSignalEngine(fetcher)
+        
+        signal = engine.generate_signal(symbol.upper())
+        
+        if not signal or signal.get('verdict') == 'UNKNOWN':
+            return SignalResponse(
+                success=False,
+                timestamp=datetime.now().isoformat(),
+                data={"error": f"Could not generate signal for {symbol}. Insufficient data."},
+            )
+        
+        return SignalResponse(
+            success=True,
+            timestamp=datetime.now().isoformat(),
+            data=signal,
+        )
+        
+    except Exception as e:
+        logger.error(f"Signal generation failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ipo-exit/{symbol}", response_model=IPOExitResponse)
+async def get_ipo_exit_analysis(symbol: str):
+    """Analyze IPO exit timing based on volume and broker flow."""
+    try:
+        from nepse_ai_trading.data.fetcher import NepseFetcher
+        from nepse_ai_trading.intelligence.ipo_exit_analyzer import IPOExitAnalyzer
+        
+        fetcher = NepseFetcher()
+        analyzer = IPOExitAnalyzer(fetcher)
+        
+        analysis = analyzer.analyze(symbol.upper())
+        
+        if not analysis:
+            return IPOExitResponse(
+                success=False,
+                timestamp=datetime.now().isoformat(),
+                data={"error": f"Could not analyze {symbol}. Stock may not be a recent IPO."},
+            )
+        
+        return IPOExitResponse(
+            success=True,
+            timestamp=datetime.now().isoformat(),
+            data=analysis,
+        )
+        
+    except Exception as e:
+        logger.error(f"IPO exit analysis failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/hold-or-sell/{symbol}", response_model=PositionAdviceResponse)
+async def get_position_advice(
+    symbol: str,
+    buy_price: float = Query(..., gt=0, description="Your purchase price"),
+    buy_date: Optional[str] = Query(None, description="Purchase date (YYYY-MM-DD)"),
+):
+    """Get hold or sell advice for an existing position."""
+    try:
+        from nepse_ai_trading.data.fetcher import NepseFetcher
+        from nepse_ai_trading.intelligence.position_advisor import PositionAdvisor
+        
+        fetcher = NepseFetcher()
+        advisor = PositionAdvisor(fetcher)
+        
+        advice = advisor.analyze(
+            symbol=symbol.upper(),
+            buy_price=buy_price,
+            buy_date=buy_date,
+        )
+        
+        if not advice:
+            return PositionAdviceResponse(
+                success=False,
+                timestamp=datetime.now().isoformat(),
+                data={"error": f"Could not analyze position for {symbol}"},
+            )
+        
+        return PositionAdviceResponse(
+            success=True,
+            timestamp=datetime.now().isoformat(),
+            data=advice,
+        )
+        
+    except Exception as e:
+        logger.error(f"Position advice failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/calendar", response_model=CalendarResponse)
+async def get_trading_calendar(
+    days: int = Query(default=14, ge=7, le=30, description="Days to look ahead"),
+    sector: Optional[str] = Query(None, description="Filter by sector"),
+):
+    """Get trading calendar with stock picks for each day."""
+    try:
+        from nepse_ai_trading.data.fetcher import NepseFetcher
+        from nepse_ai_trading.screeners.momentum_screener import MomentumScreener
+        
+        fetcher = NepseFetcher()
+        screener = MomentumScreener(fetcher)
+        
+        # Get all candidates first
+        candidates = screener.scan(sector=sector, limit=50)
+        
+        if not candidates:
+            return CalendarResponse(
+                success=True,
+                timestamp=datetime.now().isoformat(),
+                data={
+                    "scan_date": datetime.now().strftime('%Y-%m-%d'),
+                    "days_ahead": days,
+                    "total_stocks": 0,
+                    "calendar": [],
+                },
+            )
+        
+        # Distribute stocks across days based on their readiness
+        calendar = []
+        today = datetime.now()
+        
+        for i in range(days):
+            date = today + timedelta(days=i)
+            # Skip weekends
+            if date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+                continue
+            
+            day_stocks = []
+            for stock in candidates:
+                # Assign stocks to different days based on their setup readiness
+                # Simple heuristic: higher scores = sooner entry
+                score = stock.get('score', 0)
+                if score >= 70 and i == 0:  # Top picks today
+                    day_stocks.append({
+                        "symbol": stock.get('symbol'),
+                        "name": stock.get('name', stock.get('symbol')),
+                        "sector": stock.get('sector', 'Unknown'),
+                        "entry_price": stock.get('entry_price', stock.get('ltp', 0)),
+                        "target_price": stock.get('target_price', 0),
+                        "stop_loss": stock.get('stop_loss', 0),
+                        "confidence": score,
+                        "reason": stock.get('reason', 'Strong momentum setup'),
+                    })
+                elif 50 <= score < 70 and i in [1, 2]:  # Near-ready picks
+                    day_stocks.append({
+                        "symbol": stock.get('symbol'),
+                        "name": stock.get('name', stock.get('symbol')),
+                        "sector": stock.get('sector', 'Unknown'),
+                        "entry_price": stock.get('entry_price', stock.get('ltp', 0)),
+                        "target_price": stock.get('target_price', 0),
+                        "stop_loss": stock.get('stop_loss', 0),
+                        "confidence": score,
+                        "reason": stock.get('reason', 'Setup developing'),
+                    })
+            
+            if day_stocks:
+                calendar.append({
+                    "date": date.strftime('%Y-%m-%d'),
+                    "day_name": date.strftime('%A'),
+                    "stocks": day_stocks[:5],  # Max 5 per day
+                })
+        
+        total_stocks = sum(len(day['stocks']) for day in calendar)
+        
+        return CalendarResponse(
+            success=True,
+            timestamp=datetime.now().isoformat(),
+            data={
+                "scan_date": datetime.now().strftime('%Y-%m-%d'),
+                "days_ahead": days,
+                "total_stocks": total_stocks,
+                "calendar": calendar,
+            },
+        )
+        
+    except Exception as e:
+        logger.error(f"Calendar generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/smart-money", response_model=SmartMoneyResponse)
+async def get_smart_money(sector: Optional[str] = Query(None)):
+    """Track institutional buying/selling patterns."""
+    try:
+        from nepse_ai_trading.data.fetcher import NepseFetcher
+        from nepse_ai_trading.intelligence.broker_analyzer import BrokerAnalyzer
+        
+        fetcher = NepseFetcher()
+        analyzer = BrokerAnalyzer(fetcher)
+        
+        # Get broker flow data
+        flow_data = analyzer.get_market_flow(sector=sector)
+        
+        if not flow_data:
+            return SmartMoneyResponse(
+                success=True,
+                timestamp=datetime.now().isoformat(),
+                data={
+                    "summary": {
+                        "accumulating": 0,
+                        "distributing": 0,
+                        "net_market_flow": 0,
+                        "sentiment": "NEUTRAL",
+                    },
+                    "top_buyers": [],
+                    "top_sellers": [],
+                    "stocks": [],
+                },
+            )
+        
+        return SmartMoneyResponse(
+            success=True,
+            timestamp=datetime.now().isoformat(),
+            data=flow_data,
+        )
+        
+    except Exception as e:
+        logger.error(f"Smart money analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/heatmap", response_model=HeatmapResponse)
+async def get_market_heatmap():
+    """Get market heatmap showing all sectors and stock performance."""
+    try:
+        from nepse_ai_trading.data.fetcher import NepseFetcher
+        
+        fetcher = NepseFetcher()
+        
+        # Get live market data
+        live_data = fetcher.fetch_live_market()
+        company_list = fetcher.fetch_company_list()
+        
+        if not live_data or live_data.empty:
+            raise HTTPException(status_code=503, detail="Market data unavailable")
+        
+        # Normalize company list for sector lookup
+        company_map = {}
+        for item in _normalize_company_list(company_list):
+            company_map[item['symbol']] = item
+        
+        # Group by sector
+        sectors_data = {}
+        advancing = 0
+        declining = 0
+        unchanged = 0
+        
+        for _, row in live_data.iterrows():
+            symbol = str(row.get('symbol', '')).upper()
+            if not symbol or symbol not in company_map:
+                continue
+            
+            sector = company_map[symbol].get('sector', 'Unknown')
+            ltp = _to_float(row.get('ltp', row.get('close', 0)))
+            change = _to_float(row.get('change', row.get('pointChange', 0)))
+            change_pct = _to_float(row.get('changePct', row.get('percentageChange', 0)))
+            
+            if ltp <= 0:
+                continue
+            
+            # Track advancing/declining
+            if change_pct > 0.1:
+                advancing += 1
+            elif change_pct < -0.1:
+                declining += 1
+            else:
+                unchanged += 1
+            
+            if sector not in sectors_data:
+                sectors_data[sector] = []
+            
+            sectors_data[sector].append({
+                "symbol": symbol,
+                "name": company_map[symbol].get('name', symbol),
+                "ltp": ltp,
+                "change": change,
+                "change_pct": change_pct,
+            })
+        
+        # Sort stocks within each sector by change %
+        sectors = []
+        for sector_name, stocks in sorted(sectors_data.items()):
+            stocks_sorted = sorted(stocks, key=lambda x: x['change_pct'], reverse=True)
+            sectors.append({
+                "name": sector_name,
+                "stocks": stocks_sorted,
+            })
+        
+        total = advancing + declining + unchanged
+        breadth = round((advancing / total * 100), 1) if total > 0 else 50.0
+        
+        return HeatmapResponse(
+            success=True,
+            timestamp=datetime.now().isoformat(),
+            data={
+                "summary": {
+                    "advancing": advancing,
+                    "declining": declining,
+                    "unchanged": unchanged,
+                    "advance_pct": round(advancing / total * 100, 1) if total > 0 else 0,
+                    "decline_pct": round(declining / total * 100, 1) if total > 0 else 0,
+                    "breadth": breadth,
+                },
+                "sectors": sectors,
+            },
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Heatmap generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Add missing import at module level
+from datetime import datetime, timedelta
