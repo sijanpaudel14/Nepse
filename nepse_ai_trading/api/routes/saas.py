@@ -903,7 +903,7 @@ async def _refresh_market_regime_background():
 
 
 async def _fetch_market_regime_with_timeout():
-    """Fetch market regime with 10 second timeout."""
+    """Fetch market regime with 30 second timeout (Azure->Nepal latency)."""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
     
@@ -921,16 +921,16 @@ async def _fetch_market_regime_with_timeout():
         
         return regime, reason, nepse_index, ema50
     
-    # Run in thread pool with 10 second timeout
+    # Run in thread pool with 30 second timeout (Azure->Nepal has high latency)
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as executor:
         try:
             regime, reason, nepse_index, ema50 = await asyncio.wait_for(
                 loop.run_in_executor(executor, fetch_regime_data),
-                timeout=10.0
+                timeout=30.0
             )
         except asyncio.TimeoutError:
-            logger.warning("⏱️ NEPSE API timeout (10s), using default values")
+            logger.warning("⏱️ NEPSE API timeout (30s), using default values")
             regime = "BULL"
             reason = "Market data temporarily unavailable (NEPSE API timeout)"
             nepse_index = 0
