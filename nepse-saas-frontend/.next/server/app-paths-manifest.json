@@ -1,7 +1,0 @@
-{
-  "/analyze/page": "app/analyze/page.js",
-  "/signal/page": "app/signal/page.js",
-  "/page": "app/page.js",
-  "/broker-intel/page": "app/broker-intel/page.js",
-  "/portfolio/page": "app/portfolio/page.js"
-}
