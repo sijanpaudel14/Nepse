@@ -15,7 +15,11 @@ tqdm>=4.67.1
 # Installed separately in Dockerfile
 
 # HTTP (required by NepseUnofficialApi)
-httpx>=0.27.2
+httpx[http2]>=0.27.2
+
+# Nepse dependencies (required since we install nepse with --no-deps)
+flask>=3.0.0
+pywasm>=1.2.0
 
 # Database
 sqlalchemy==2.0.25
