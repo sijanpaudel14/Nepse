@@ -255,11 +255,28 @@ class TechnicalSignalEngine:
         # 1. Fetch data if not provided
         df = price_history
         if df is None and self.fetcher:
-            df = self.fetcher.safe_fetch_data(symbol, days=lookback_days, min_rows=50)
+            # Try to fetch with relaxed min_rows for newly listed stocks
+            df = self.fetcher.safe_fetch_data(symbol, days=lookback_days, min_rows=5)
         
-        if df is None or df.empty or len(df) < 50:
-            logger.warning(f"{symbol}: Insufficient data for signal generation")
+        # FIX: Adaptive minimum for newly listed stocks (IPOs)
+        # - Full analysis: 50+ days (ideal)
+        # - Limited analysis: 7-49 days (newly listed IPOs)
+        # - No signal: < 7 days (too early, wait for price discovery)
+        if df is None or df.empty:
+            logger.warning(f"{symbol}: No data available for signal generation")
             return self._create_insufficient_data_signal(symbol)
+        
+        days_available = len(df)
+        
+        if days_available < 7:
+            logger.warning(f"{symbol}: Only {days_available} days of data - need at least 7 days for price discovery")
+            return self._create_insufficient_data_signal(symbol, 
+                custom_warning=f"⚠️ Newly listed stock with only {days_available} trading days. Wait until at least 7 days of trading data available.")
+        
+        # For newly listed stocks (7-49 days), use limited analysis mode
+        is_newly_listed = days_available < 50
+        if is_newly_listed:
+            logger.info(f"{symbol}: Newly listed stock with {days_available} days - using LIMITED analysis mode")
         
         # Ensure clean data
         df = self._prepare_dataframe(df)
@@ -297,6 +314,13 @@ class TechnicalSignalEngine:
             df=df,
             sector=sector,  # Pass sector for momentum calculation
         )
+        
+        # Add warning for newly listed stocks
+        if is_newly_listed:
+            signal.warnings.insert(0, 
+                f"📌 NEWLY LISTED: Only {days_available} trading days available. "
+                f"Signal reliability improves after 50+ days of data."
+            )
         
         # 8. Add broker data insights if available
         if broker_data or self.sharehub:
@@ -336,20 +360,36 @@ class TechnicalSignalEngine:
            - Price below falling EMAs
            - Best to avoid or paper-trade only
         """
-        if len(df) < 50:
+        # FIX: Adaptive minimum for newly listed stocks
+        if len(df) < 7:
             return TrendPhase.UNKNOWN
+        
+        # For newly listed stocks (7-49 days), use simplified trend detection
+        is_newly_listed = len(df) < 50
         
         close = df["close"].values
         high = df["high"].values
         low = df["low"].values
         volume = df["volume"].values if "volume" in df.columns else None
         
-        # Calculate EMAs
-        ema20 = pd.Series(close).ewm(span=20).mean().values
-        ema50 = pd.Series(close).ewm(span=50).mean().values
-        ema200 = pd.Series(close).ewm(span=200).mean().values if len(df) >= 200 else ema50
+        # Calculate EMAs (adapt window to available data)
+        if is_newly_listed:
+            # Use shorter EMAs for newly listed stocks
+            days_available = len(df)
+            ema_short = pd.Series(close).ewm(span=min(5, days_available // 2)).mean().values
+            ema_long = pd.Series(close).ewm(span=min(10, days_available)).mean().values
+            ema200 = ema_long  # Use longest available as proxy
+        else:
+            # Standard EMAs for established stocks
+            ema_short = pd.Series(close).ewm(span=20).mean().values
+            ema_long = pd.Series(close).ewm(span=50).mean().values
+            ema200 = pd.Series(close).ewm(span=200).mean().values if len(df) >= 200 else ema_long
         
         ltp = close[-1]
+        
+        # Use the calculated EMAs (now adaptive)
+        ema20 = ema_short
+        ema50 = ema_long
         
         # Calculate trend metrics (with division guards)
         price_vs_ema20 = (ltp / max(ema20[-1], 0.001) - 1) * 100 if ema20[-1] > 0 else 0
@@ -374,6 +414,9 @@ class TechnicalSignalEngine:
         
         # RSI for divergence detection
         rsi = self._calculate_rsi(close)
+        # FIX: RSI can be None for newly listed stocks - set safe default
+        if rsi is None:
+            rsi = 50  # Neutral RSI for limited data
         
         # Decision logic
         score = {
@@ -390,7 +433,7 @@ class TechnicalSignalEngine:
             score[TrendPhase.MARKUP] += 20
         if highs_trend > 0 and lows_trend > 0:  # Higher highs AND higher lows
             score[TrendPhase.MARKUP] += 30
-        if 50 < rsi < 70:
+        if rsi is not None and 50 < rsi < 70:  # Guard against None
             score[TrendPhase.MARKUP] += 20
         
         # MARKDOWN indicators
@@ -400,7 +443,7 @@ class TechnicalSignalEngine:
             score[TrendPhase.MARKDOWN] += 20
         if highs_trend < 0 and lows_trend < 0:  # Lower highs AND lower lows
             score[TrendPhase.MARKDOWN] += 30
-        if rsi < 40:
+        if rsi is not None and rsi < 40:  # Guard against None
             score[TrendPhase.MARKDOWN] += 20
         
         # ACCUMULATION indicators (bottoming after markdown)
@@ -2196,13 +2239,14 @@ class TechnicalSignalEngine:
         
         return signal
     
-    def _create_insufficient_data_signal(self, symbol: str) -> TradingSignal:
+    def _create_insufficient_data_signal(self, symbol: str, custom_warning: str = None) -> TradingSignal:
         """Create signal when data is insufficient."""
+        warning = custom_warning or "⚠️ Insufficient data for signal generation"
         return TradingSignal(
             symbol=symbol,
             signal_type=SignalType.HOLD,
             confidence=0,
-            warnings=["⚠️ Insufficient data for signal generation"],
+            warnings=[warning],
             trend_phase=TrendPhase.UNKNOWN,
         )
     
