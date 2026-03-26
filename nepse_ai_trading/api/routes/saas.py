@@ -820,10 +820,39 @@ async def run_stealth_scan(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Cache for market regime data (5 minute TTL)
+_market_regime_cache = {
+    "data": None,
+    "timestamp": None,
+    "ttl_seconds": 300  # 5 minutes
+}
+
+def _get_cached_regime():
+    """Get cached market regime if still valid."""
+    if _market_regime_cache["data"] is None:
+        return None
+    
+    now = datetime.now()
+    cached_time = _market_regime_cache["timestamp"]
+    
+    if cached_time and (now - cached_time).total_seconds() < _market_regime_cache["ttl_seconds"]:
+        logger.info(f"📦 Returning cached market regime (age: {(now - cached_time).total_seconds():.0f}s)")
+        return _market_regime_cache["data"]
+    
+    return None
+
+
 @router.get("/market-regime", response_model=MarketRegimeResponse)
 async def get_market_regime():
-    """Get current market regime (Bull/Bear/Panic)."""
+    """Get current market regime (Bull/Bear/Panic) with 5-minute cache."""
     try:
+        # Check cache first
+        cached = _get_cached_regime()
+        if cached:
+            return cached
+        
+        logger.info("🔄 Fetching fresh market regime data...")
+        
         from analysis.master_screener import MasterStockScreener
         
         screener = MasterStockScreener(strategy="momentum")
@@ -832,14 +861,34 @@ async def get_market_regime():
         # Get NEPSE index data
         from data.fetcher import NepseFetcher
         fetcher = NepseFetcher()
-        index_df = fetcher.fetch_index_history(days=60)
         
-        nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
-        ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
+        # Add timeout protection
+        import signal
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError("NEPSE API timeout")
+        
+        nepse_index = 0
+        ema50 = 0
+        
+        try:
+            # Set 30 second timeout for NEPSE API call
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(30)
+            
+            index_df = fetcher.fetch_index_history(days=60)
+            
+            signal.alarm(0)  # Cancel alarm
+            
+            nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
+            ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
+        except (TimeoutError, Exception) as e:
+            logger.warning(f"NEPSE API timeout/error: {e}, using cached/default values")
+            signal.alarm(0)  # Cancel alarm
         
         regime_emoji = ""
         
-        return MarketRegimeResponse(
+        response = MarketRegimeResponse(
             regime=regime,
             regime_emoji=regime_emoji,
             reason=reason,
@@ -848,8 +897,18 @@ async def get_market_regime():
             timestamp=datetime.now().isoformat(),
         )
         
+        # Cache the response
+        _market_regime_cache["data"] = response
+        _market_regime_cache["timestamp"] = datetime.now()
+        
+        return response
+        
     except Exception as e:
         logger.error(f"Market regime check failed: {e}")
+        # Return cached data if available, even if expired
+        if _market_regime_cache["data"]:
+            logger.warning("Returning stale cached data due to error")
+            return _market_regime_cache["data"]
         raise HTTPException(status_code=500, detail=str(e))
 
 
