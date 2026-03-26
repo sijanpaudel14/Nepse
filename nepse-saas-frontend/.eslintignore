@@ -1,0 +1,4 @@
+next.config.mjs
+next.config.js
+next.config.production.js
+^.eslintrc.json

@@ -1,17 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Enable React Strict Mode
+  output: 'export',  // Enable static export
   reactStrictMode: true,
-  
-  // API proxy to FastAPI backend
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: 'http://localhost:8000/api/:path*',
-      },
-    ];
+  trailingSlash: true,
+  images: {
+    unoptimized: true  // Required for static export
   },
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'https://api.nepse.sijanpaudel.com.np'
+  }
 };
 
-module.exports = nextConfig;
+export default nextConfig;
