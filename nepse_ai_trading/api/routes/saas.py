@@ -29,6 +29,10 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel, Field
 from loguru import logger
 
+# Pre-import all dependencies to avoid ThreadPoolExecutor import issues
+from analysis.master_screener import MasterStockScreener
+from data.fetcher import NepseFetcher
+
 router = APIRouter(prefix="/api", tags=["SaaS"])
 _ANALYZE_CANCEL_FLAGS: Dict[str, bool] = {}
 _ANALYZE_LOCK = threading.Lock()
@@ -905,9 +909,7 @@ async def _fetch_market_regime_with_timeout():
     
     def fetch_regime_data():
         """Fetch regime in thread."""
-        from analysis.master_screener import MasterStockScreener
-        from data.fetcher import NepseFetcher
-        
+        # All imports already done at module level - just use them
         screener = MasterStockScreener(strategy="momentum")
         regime, reason = screener.check_market_regime()
         
