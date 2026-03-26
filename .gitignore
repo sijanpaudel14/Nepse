@@ -14,3 +14,5 @@ nepse_ai_trading/api/__pycache__
 *.pyc
 market_logs
 .pytest_cache
+nepse-saas-frontend/.next
+nepse-saas-frontend/.next/*
