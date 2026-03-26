@@ -873,7 +873,9 @@ async def get_market_regime():
         return await _fetch_market_regime_with_timeout()
         
     except Exception as e:
+        import traceback
         logger.error(f"Market regime check failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         # Return safe default
         return MarketRegimeResponse(
             regime="BULL",
