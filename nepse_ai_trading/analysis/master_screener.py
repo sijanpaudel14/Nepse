@@ -2043,15 +2043,18 @@ class MasterStockScreener:
         raw_stop_loss = ltp * 0.95  # -5% target
         stop_loss_with_slippage = ltp * (0.95 - self.SLIPPAGE_PERCENT)  # Exit lower due to panic
         
+        # FIX: Use slippage-adjusted entry price as primary, account for exit slippage in target
+        target_with_exit_slippage = ltp * 1.10 * (1 - self.SLIPPAGE_PERCENT)  # Net after exit slippage
+        
         # Initialize result with real-world trade plan
         result = ScreenedStock(
             symbol=symbol,
             name=name,
             sector=sector,
             ltp=ltp,
-            entry_price=ltp,
+            entry_price=entry_with_slippage,  # FIX: Use slippage-adjusted as primary entry
             entry_price_with_slippage=entry_with_slippage,
-            target_price=ltp * 1.10,  # +10%
+            target_price=target_with_exit_slippage,  # FIX: Account for exit slippage
             stop_loss=raw_stop_loss,
             stop_loss_with_slippage=stop_loss_with_slippage,
             risk_reward_ratio=2.0,     # 10% gain / 5% loss (raw)
@@ -3224,6 +3227,9 @@ class MasterStockScreener:
         2. Stop loss hit → Cut loss immediately
         3. Time-based exit → If neither hit in max_days, review and decide
         """
+        # FIX: Guard against zero entry price
+        if entry <= 0:
+            return "❌ Invalid entry price - cannot generate exit rules"
         target_gain_pct = ((target / entry) - 1) * 100
         stop_loss_pct = (1 - (stop / entry)) * 100
         

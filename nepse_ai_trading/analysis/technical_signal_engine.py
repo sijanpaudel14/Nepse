@@ -2302,8 +2302,14 @@ class TechnicalSignalEngine:
         # Risk per share
         risk_per_share = entry_price - stop_loss
         
+        # FIX: Guard against zero/negative risk per share (entry == stop_loss)
+        if risk_per_share <= 0:
+            logger.warning(f"{symbol}: Invalid risk per share ({risk_per_share:.2f}), entry <= stop_loss")
+            risk_per_share = entry_price * 0.05  # Default to 5% risk
+            stop_loss = entry_price - risk_per_share
+        
         # Sanity check: risk per share should be reasonable (1-15% of entry)
-        risk_pct_of_entry = risk_per_share / entry_price
+        risk_pct_of_entry = risk_per_share / entry_price if entry_price > 0 else 0
         if risk_pct_of_entry > 0.15:
             logger.warning(f"{symbol}: Risk per share ({risk_pct_of_entry:.1%}) exceeds 15%, capping")
             risk_per_share = entry_price * 0.15
@@ -2387,7 +2393,7 @@ class TechnicalSignalEngine:
                 "risk_percent": round(actual_risk / portfolio_value * 100, 4),
                 "method": "manual_2pct_rule",
                 "valid": True,
-                "risk_reward": round((target_price - entry_price) / risk_per_share, 2),
+                "risk_reward": round((target_price - entry_price) / max(risk_per_share, 0.01), 2),  # FIX: Guard div-by-zero
                 "stop_loss": round(stop_loss, 2),
                 "target_price": round(target_price, 2),
             }
@@ -2439,6 +2445,27 @@ class TechnicalSignalEngine:
         lines.append(f"   Trend Phase: {signal.trend_phase.value.upper()}")
         lines.append(f"   Generated: {signal.generated_at.strftime('%Y-%m-%d %H:%M')}")
         lines.append("=" * 70)
+        
+        # FIX: Check for insufficient data / invalid signal
+        if signal.entry_price <= 0 or signal.confidence == 0:
+            lines.append("\n" + "="*70)
+            lines.append("⚠️  DATA UNAVAILABLE - CANNOT GENERATE SIGNAL")
+            lines.append("="*70)
+            lines.append("\nPossible reasons:")
+            lines.append("  • Stock symbol not found (check spelling)")
+            lines.append("  • No recent trading data available")
+            lines.append("  • Market data API is down")
+            lines.append("  • Stock may be suspended/delisted")
+            lines.append("\nWhat to do:")
+            lines.append("  1. Verify symbol exists: nepse --list")
+            lines.append("  2. Check if market is open")
+            lines.append("  3. Try a different stock symbol")
+            if signal.warnings:
+                lines.append("\nDetails:")
+                for warning in signal.warnings:
+                    lines.append(f"  {warning}")
+            lines.append("=" * 70)
+            return "\n".join(lines)
         
         # ALWAYS show price levels (entry, targets, stop loss)
         if signal.signal_type in [SignalType.STRONG_BUY, SignalType.BUY]:

@@ -270,9 +270,12 @@ class PriceTargetAnalyzer:
         analysis = self._assess_smart_money_risk(symbol, analysis, ltp)
         
         # Calculate risk-reward ratio
+        # FIX: Guard against zero downside risk
         if analysis.moderate_target and analysis.downside_risk_percent > 0:
             upside = analysis.moderate_target.upside_percent
             analysis.risk_reward_ratio = upside / analysis.downside_risk_percent
+        elif analysis.moderate_target:
+            analysis.risk_reward_ratio = 0  # No downside = can't calculate R:R
         
         # Add warnings (including smart money warnings)
         analysis.warnings = self._generate_warnings(analysis, df, ltp)

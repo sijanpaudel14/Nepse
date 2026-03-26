@@ -510,16 +510,21 @@ class ManipulationDetector:
                 result.volume_ratio_30d = 1.0
             
             # Broker accumulation score
+            # FIX: Use total_buy_volume as denominator for proper accumulation measurement
             if broker_data_1m:
                 total_net = sum(b.net_quantity for b in broker_data_1m)
+                total_buy_volume = sum(b.buy_quantity for b in broker_data_1m if hasattr(b, 'buy_quantity'))
                 total_volume = sum(abs(b.net_quantity) for b in broker_data_1m)
                 
-                if total_volume > 0:
+                # Use buy volume if available, otherwise fall back to total volume
+                denominator = total_buy_volume if total_buy_volume > 0 else max(total_volume, 1)
+                
+                if denominator > 0:
                     # Positive = accumulation, negative = distribution
                     if total_net > 0:
-                        result.accumulation_score = min(100, (total_net / total_volume) * 100)
+                        result.accumulation_score = min(100, (total_net / denominator) * 100)
                     else:
-                        result.distribution_score = min(100, abs(total_net / total_volume) * 100)
+                        result.distribution_score = min(100, abs(total_net / denominator) * 100)
             
             # PHASE CLASSIFICATION LOGIC (H3 FIX: Adaptive thresholds)
             

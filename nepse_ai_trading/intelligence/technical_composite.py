@@ -279,6 +279,11 @@ class TechnicalCompositeScorer:
             avg_gain = gains.ewm(alpha=wilder_alpha, min_periods=period, adjust=False).mean()
             avg_loss = losses.ewm(alpha=wilder_alpha, min_periods=period, adjust=False).mean()
             
+            # FIX: Guard against empty series before iloc access
+            if len(avg_gain) == 0 or len(avg_loss) == 0:
+                logger.debug("RSI: Empty avg_gain or avg_loss series")
+                return 50.0, 50.0
+            
             # Get latest values
             last_avg_gain = float(avg_gain.iloc[-1])
             last_avg_loss = float(avg_loss.iloc[-1])
@@ -423,7 +428,11 @@ class TechnicalCompositeScorer:
         try:
             vol = df['volume'].iloc[-1]
             avg_vol = df['volume'].rolling(period).mean().iloc[-1]
-            price_change = (df['close'].iloc[-1] - df['close'].iloc[-2]) / df['close'].iloc[-2]
+            # FIX: Guard against zero previous close price
+            prev_close = df['close'].iloc[-2] if len(df) >= 2 else 1
+            if prev_close <= 0:
+                prev_close = 1
+            price_change = (df['close'].iloc[-1] - prev_close) / prev_close
             
             vol_ratio = vol / (avg_vol + 1)
             

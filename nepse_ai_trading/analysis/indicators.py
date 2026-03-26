@@ -416,8 +416,9 @@ class TechnicalIndicators:
         # NEPSE has ~250 trading days per year (Sun-Thu, minus holidays)
         window = min(252, len(self.df))
         
-        self.df["high_52week"] = self.df["high"].rolling(window=window).max()
-        self.df["low_52week"] = self.df["low"].rolling(window=window).min()
+        # FIX: Add .shift(1) to prevent lookahead bias - only use PAST bars
+        self.df["high_52week"] = self.df["high"].rolling(window=window).max().shift(1)
+        self.df["low_52week"] = self.df["low"].rolling(window=window).min().shift(1)
         
         # Percentage from 52-week high - SAFE DIVISION
         self.df["pct_from_high"] = np.where(
@@ -512,8 +513,9 @@ class TechnicalIndicators:
             self.add_rsi()
         
         # Find local lows in price and RSI (using 5-day windows)
-        self.df["price_low_5d"] = self.df["low"].rolling(5).min()
-        self.df["rsi_low_5d"] = self.df[f"rsi_{period}"].rolling(5).min()
+        # FIX: Add .shift(1) to prevent lookahead bias - only use PAST bars
+        self.df["price_low_5d"] = self.df["low"].rolling(5).min().shift(1)
+        self.df["rsi_low_5d"] = self.df[f"rsi_{period}"].rolling(5).min().shift(1)
         
         # Bullish divergence: price at 5-day low but RSI is higher than previous 5-day low
         self.df["bullish_divergence"] = (
@@ -695,16 +697,18 @@ def calculate_support_resistance(
     highs = df["high"].values
     pivot_highs = []
     
-    for i in range(window, len(highs) - window):
-        if highs[i] == max(highs[i-window:i+window+1]):
+    # FIX: Only look at PAST bars [i-window:i] to prevent lookahead bias
+    for i in range(window, len(highs)):
+        if highs[i] == max(highs[max(0, i-window):i+1]):
             pivot_highs.append(highs[i])
     
     # Find pivot lows (local minima)
     lows = df["low"].values
     pivot_lows = []
     
-    for i in range(window, len(lows) - window):
-        if lows[i] == min(lows[i-window:i+window+1]):
+    # FIX: Only look at PAST bars [i-window:i] to prevent lookahead bias
+    for i in range(window, len(lows)):
+        if lows[i] == min(lows[max(0, i-window):i+1]):
             pivot_lows.append(lows[i])
     
     # Cluster nearby levels

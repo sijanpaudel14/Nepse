@@ -51,6 +51,9 @@ class TradeResult:
     @property
     def gross_return_pct(self) -> float:
         """Percentage return before costs."""
+        # FIX: Guard against zero entry_price
+        if self.entry_price <= 0:
+            return 0.0
         return (self.exit_price - self.entry_price) / self.entry_price * 100
     
     @property

@@ -491,9 +491,14 @@ class PortfolioManager:
                 break
             
             # Get entry price (use LTP or scan entry price)
-            entry_price = getattr(stock, 'entry_price_with_slippage', None) or getattr(stock, 'ltp', 0)
-            if entry_price <= 0:
-                entry_price = self.get_ltp(stock.symbol)
+            # FIX: Always apply slippage if not already included
+            entry_price = getattr(stock, 'entry_price_with_slippage', None)
+            if not entry_price or entry_price <= 0:
+                raw_ltp = getattr(stock, 'ltp', 0)
+                if raw_ltp <= 0:
+                    raw_ltp = self.get_ltp(stock.symbol)
+                # Always apply 1.5% slippage for NEPSE illiquidity
+                entry_price = raw_ltp * 1.015 if raw_ltp > 0 else 0
             
             if entry_price > 0:
                 if self.add_position(stock.symbol, entry_price):

@@ -981,13 +981,46 @@ async def add_to_portfolio(
     symbol: str = Body(...),
     quantity: int = Body(...),
     price: float = Body(...),
+    portfolio_value: float = Body(default=500000.0),
 ):
-    """Add a stock to the paper trading portfolio."""
+    """Add a stock to the paper trading portfolio with risk validation."""
     try:
         import sqlite3
         from pathlib import Path
         
+        # FIX: Import and use PositionSizer to enforce 2% risk rule
+        from nepse_ai_trading.risk.position_sizer import PositionSizer
+        
         db_path = Path(__file__).parent.parent.parent / "tools" / "paper_trading.db"
+        
+        # Calculate target and stop-loss (10% and -6.5%)
+        target_price = round(price * 1.10, 2)
+        stop_loss = round(price * 0.935, 2)
+        
+        # FIX: Validate position size against 2% risk rule
+        sizer = PositionSizer(
+            portfolio_value=portfolio_value,
+            max_risk_per_trade=0.02,  # 2% max risk
+        )
+        
+        position = sizer.calculate(
+            symbol=symbol.upper(),
+            entry_price=price,
+            stop_loss=stop_loss,
+            target_price=target_price,
+        )
+        
+        # Reject if risk exceeds 2% limit
+        if not position.is_valid():
+            return {
+                "success": False,
+                "error": f"Risk {position.risk_percent:.2f}% exceeds 2% limit. Max shares: {position.shares}",
+                "max_allowed_shares": position.shares,
+                "requested_shares": quantity,
+            }
+        
+        # Use validated quantity (cap user input to safe amount)
+        validated_quantity = min(quantity, position.shares) if position.shares > 0 else quantity
         
         # Initialize DB if needed
         conn = sqlite3.connect(db_path)
@@ -1009,14 +1042,10 @@ async def add_to_portfolio(
             )
         """)
         
-        # Calculate target and stop-loss (10% and -6.5%)
-        target_price = round(price * 1.10, 2)
-        stop_loss = round(price * 0.935, 2)
-        
         cursor.execute("""
             INSERT INTO trades (symbol, entry_date, entry_price, quantity, target_price, stop_loss, status)
             VALUES (?, ?, ?, ?, ?, ?, 'OPEN')
-        """, (symbol.upper(), datetime.now().strftime('%Y-%m-%d'), price, quantity, target_price, stop_loss))
+        """, (symbol.upper(), datetime.now().strftime('%Y-%m-%d'), price, validated_quantity, target_price, stop_loss))
         
         conn.commit()
         trade_id = cursor.lastrowid
@@ -1024,7 +1053,50 @@ async def add_to_portfolio(
         
         return {
             "success": True,
-            "message": f"Added {quantity} shares of {symbol} at Rs.{price}",
+            "message": f"Added {validated_quantity} shares of {symbol} at Rs.{price}",
+            "trade_id": trade_id,
+            "target_price": target_price,
+            "stop_loss": stop_loss,
+            "validated_quantity": validated_quantity,
+            "risk_percent": round(position.risk_percent, 2),
+            "position_value": round(validated_quantity * price, 2),
+        }
+        
+    except ImportError:
+        # Fallback if PositionSizer not available - use simple cap
+        logger.warning("PositionSizer not available, using fallback validation")
+        max_position_value = portfolio_value * 0.20  # Max 20% in one position
+        max_shares = int(max_position_value / price) if price > 0 else quantity
+        validated_quantity = min(quantity, max_shares)
+        
+        # Continue with original logic using validated_quantity
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent.parent / "tools" / "paper_trading.db"
+        target_price = round(price * 1.10, 2)
+        stop_loss = round(price * 0.935, 2)
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL,
+                entry_date TEXT NOT NULL, entry_price REAL NOT NULL,
+                quantity INTEGER NOT NULL, target_price REAL, stop_loss REAL,
+                exit_date TEXT, exit_price REAL, pnl REAL, status TEXT DEFAULT 'OPEN'
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO trades (symbol, entry_date, entry_price, quantity, target_price, stop_loss, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'OPEN')
+        """, (symbol.upper(), datetime.now().strftime('%Y-%m-%d'), price, validated_quantity, target_price, stop_loss))
+        conn.commit()
+        trade_id = cursor.lastrowid
+        conn.close()
+        
+        return {
+            "success": True,
+            "message": f"Added {validated_quantity} shares of {symbol} at Rs.{price} (fallback validation)",
             "trade_id": trade_id,
             "target_price": target_price,
             "stop_loss": stop_loss,

@@ -1084,8 +1084,14 @@ class FundamentalAnalyzer:
             
             # Drawdown from peak
             rolling_max = df["close"].cummax()
-            current_drawdown = (current - rolling_max.iloc[-1]) / rolling_max.iloc[-1] * 100
-            max_drawdown = ((df["close"] - rolling_max) / rolling_max).min() * 100
+            # FIX: Guard against zero rolling_max
+            last_rolling_max = rolling_max.iloc[-1] if len(rolling_max) > 0 else 1
+            if last_rolling_max > 0:
+                current_drawdown = (current - last_rolling_max) / last_rolling_max * 100
+                max_drawdown = ((df["close"] - rolling_max) / rolling_max.replace(0, 1)).min() * 100
+            else:
+                current_drawdown = 0
+                max_drawdown = 0
             
             # Price levels
             # Support = recent lows
