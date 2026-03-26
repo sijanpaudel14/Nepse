@@ -1,0 +1,9 @@
+2026-03-26 12:18:01 | INFO     | core.logging_config:setup_logging:51 - Logging initialized. Level: INFO
+2026-03-26 12:18:01 | INFO     | data.fetcher:__init__:61 - NepseFetcher initialized with official NepseUnofficialApi
+2026-03-26 12:18:01 | INFO     | intelligence.ipo_exit_analyzer:analyze:320 - 📊 Analyzing IPO exit signals for SOHL
+2026-03-26 12:18:01 | INFO     | data.fetcher:fetch_price_history:196 - Fetching 60-day history for SOHL...
+2026-03-26 12:18:01 | INFO     | data.fetcher:fetch_price_history:253 - Fetched 8 days of history for SOHL
+2026-03-26 12:18:01 | WARNING  | data.sharehub_api:ensure_valid_token:612 - 🔄 Token expired or invalid. Attempting auto-login...
+2026-03-26 12:18:01 | INFO     | data.sharehub_api:login:538 - 🔐 Logging into ShareHub as waytoyourdestination6@gmail.com...
+2026-03-26 12:18:02 | INFO     | data.sharehub_api:login:586 - ✅ ShareHub Login Successful! Token refreshed.
+2026-03-26 12:18:02 | INFO     | intelligence.ipo_exit_analyzer:analyze:353 - 📊 SOHL: Exit Signal = watch, Verdict = WATCH CLOSELY

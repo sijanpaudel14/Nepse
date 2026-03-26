@@ -283,6 +283,13 @@ Examples:
     )
     
     parser.add_argument(
+        "--ipo-exit",
+        type=str,
+        metavar="SYMBOL",
+        help="Analyze IPO exit signals for newly listed stock (e.g., --ipo-exit SOHL)"
+    )
+    
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose logging"
@@ -332,6 +339,15 @@ def main():
                 start_date=args.backtest_start,
             )
             print(result.summary())
+        
+        elif args.ipo_exit:
+            # Run IPO exit analysis
+            from intelligence.ipo_exit_analyzer import IPOExitAnalyzer
+            
+            print(f"\n📊 Analyzing IPO exit signals for {args.ipo_exit}...")
+            analyzer = IPOExitAnalyzer()
+            result = analyzer.analyze(args.ipo_exit)
+            print(result.format_report())
         
         else:
             run_full_pipeline(dry_run=args.dry_run)
