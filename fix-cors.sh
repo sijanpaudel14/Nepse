@@ -33,9 +33,10 @@ az containerapp update \
     "FRONTEND_URL=$FRONTEND_URL" \
   --output none
 
-# Restart backend
-echo -e "\n${GREEN}[3/3]${NC} Restarting backend..."
-az containerapp revision restart \
+# Restart backend (trigger new revision)
+echo -e "\n${GREEN}[3/3]${NC} Triggering backend restart..."
+# Instead of restarting, we update with the same config which creates a new revision
+az containerapp update \
   --name nepse-api \
   --resource-group $RG \
   --output none

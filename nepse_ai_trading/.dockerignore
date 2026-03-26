@@ -37,7 +37,11 @@ build/
 *.egg-info/
 
 # Ignore data files (mount as volume instead)
-data/
+# BUT: Keep the data/ module code, only ignore data files
+data/*.db
+data/*.sqlite
+data/*.csv
+data/*.json
 *.db
 *.sqlite
 
