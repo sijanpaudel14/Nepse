@@ -257,8 +257,9 @@ class NepseFetcher:
             logger.warning(f"Symbol not found in NEPSE: {symbol}")
             return pd.DataFrame()
         except Exception as e:
-            logger.error(f"Failed to fetch history for {symbol}: {e}")
-            raise NepseAPIError(f"Price history fetch failed: {e}")
+            logger.warning(f"Cannot fetch history for {symbol} (delisted/suspended?): {e}")
+            # Return empty DataFrame instead of raising to allow scan to continue
+            return pd.DataFrame()
 
     def safe_fetch_data(self, symbol: str, days: int = 60, min_rows: int = 14, end_date: "date" = None) -> pd.DataFrame:
         """
