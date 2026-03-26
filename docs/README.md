@@ -16,6 +16,13 @@ Perfect for traders new to the system:
 - **[Broker Intelligence Guide](guides/BROKER_INTELLIGENCE_GUIDE.md)** - Operator detection explained (350+ lines)
 - **[Telegram Guide](guides/TELEGRAM_GUIDE.md)** - Set up real-time alerts
 
+### 🆕 Position Management Tools
+
+Help your friends decide what to do with their holdings:
+
+- **[IPO Exit Analyzer](ipo-exit-analyzer/)** - When to sell newly listed IPOs (< 30 days) 🆕
+- **[Position Advisor](position-advisor/)** - Hold or sell existing positions (any age) 🆕
+
 **Start with:** Quick Start Guide → User Guide → Auto Logger Guide
 
 ---
@@ -82,6 +89,10 @@ Historical documentation and session notes:
 #### 🎯 Find Entry/Exit Timing 🆕
 1. [Technical Signal Engine v2.0](features/TECHNICAL_SIGNAL_ENGINE_V2.md) (⭐ Start here)
 2. [Command Reference Card](features/COMMAND_REFERENCE_CARD.md) - `--signal` command
+
+#### 🏦 Decide Hold or Sell Existing Position 🆕
+1. [Position Advisor](position-advisor/) - For stocks bought weeks/months ago (⭐ Start here)
+2. [IPO Exit Analyzer](ipo-exit-analyzer/) - For newly listed IPOs (< 30 days)
 
 #### 💹 Calculate Price Targets 🆕
 1. [Command Reference Card](features/COMMAND_REFERENCE_CARD.md) - `--price-targets` command
@@ -167,6 +178,13 @@ Day 6-7: Combine all features in daily workflow
 --calendar-max-stocks 0 # 0=all stocks (default), N=cap universe
 ```
 
+### Position Management 🆕
+```bash
+--ipo-exit SYMBOL                           # IPO exit analysis (< 30 days)
+--hold-or-sell SYMBOL --buy-price 500        # Position advisor
+--hold-or-sell SYMBOL --buy-price 500 --buy-date 2026-01-01  # With date
+```
+
 ### Calendar Filters (also works with `--calendar`)
 ```bash
 --sector=all|hydro|bank|finance|...
@@ -199,7 +217,19 @@ Based on usage and importance:
    - NEPSE-optimized (75-80% accuracy)
    - Beats manual chart reading
 
-2. **[Broker Intelligence Guide](guides/BROKER_INTELLIGENCE_GUIDE.md)** ⭐⭐⭐⭐⭐
+2. **[Position Advisor](position-advisor/)** ⭐⭐⭐⭐⭐ 🆕
+   - Hold or sell existing positions
+   - Health score (0-100) with verdicts
+   - Holding period awareness (1 week to 1 year)
+   - Help your friends decide
+
+3. **[IPO Exit Analyzer](ipo-exit-analyzer/)** ⭐⭐⭐⭐⭐ 🆕
+   - When to sell newly listed IPOs
+   - Volume + Broker flow analysis
+   - 5 exit signals with scoring
+   - Perfect for first 30 days
+
+4. **[Broker Intelligence Guide](guides/BROKER_INTELLIGENCE_GUIDE.md)** ⭐⭐⭐⭐⭐
    - Operator detection
    - 350+ lines
    - Trading strategies included
@@ -247,11 +277,12 @@ Based on usage and importance:
 
 ## 📊 Documentation Stats
 
-- **Total Docs:** 20 markdown files (+3 new) 🆕
-- **Total Lines:** ~6,500+ lines
+- **Total Docs:** 26 markdown files (+6 new) 🆕
+- **Total Lines:** ~10,500+ lines  
 - **Guides:** 5
+- **Position Management:** 2 (NEW) 🆕
 - **Features:** 4 (+1 new) 🆕
-- **Technical:** 5 (+2 new) 🆕
+- **Technical:** 6 (+3 new) 🆕
 - **Archive:** 5
 - **API:** 1
 
@@ -259,6 +290,10 @@ Based on usage and importance:
 
 ## 🔄 Recently Updated
 
+- **2026-03-26:** Position Advisor (NEW - Hold or sell existing positions) 🆕
+- **2026-03-26:** IPO Exit Analyzer (NEW - When to sell newly listed IPOs) 🆕
+- **2026-03-26:** NEPSE-specific fixes (Stop loss 5%, RSI exit 60, real-time LTP) 🆕
+- **2026-03-26:** Comprehensive Audit (57 fixes - lookahead bias, crash guards, execution realism) 🆕
 - **2026-03-25:** Technical Signal Engine v2.0 (NEW - NEPSE-optimized entry/exit timing) 🆕
 - **2026-03-25:** Price Target Analyzer (NEW - Multi-level targets with risk assessment) 🆕
 - **2026-03-25:** Technical Analysis Periods Audit (NEW - Lookback optimization) 🆕
@@ -283,6 +318,15 @@ docs/
 │   ├── TELEGRAM_GUIDE.md
 │   └── BROKER_INTELLIGENCE_GUIDE.md
 │
+├── ipo-exit-analyzer/           # 🆕 IPO exit timing
+│   ├── README.md
+│   ├── IPO_EXIT_GUIDE.md
+│   └── BROKER_FLOW_EXPLAINED.md
+│
+├── position-advisor/            # 🆕 Hold or sell advisor
+│   ├── README.md
+│   └── POSITION_ADVISOR_GUIDE.md
+│
 ├── features/                    # Feature documentation
 │   ├── ADVANCED_FEATURES_GUIDE.md
 │   ├── COMMAND_REFERENCE_CARD.md
@@ -293,6 +337,7 @@ docs/
 │   └── NEPSE_unofficial_API.md
 │
 ├── technical/                   # Technical docs
+│   ├── AUDIT_FIXES_SUMMARY.md   # 🆕 57 audit fixes
 │   ├── TECHNICAL_ANALYSIS_PERIODS_AUDIT.md  # 🆕
 │   ├── FINAL_BUG_FIXES_SESSION.md
 │   ├── TIMEOUT_FIXES_COMPLETE.md
@@ -330,6 +375,8 @@ docs/
    - `--analyze SYMBOL` (stock deep dive)
    - `--signal SYMBOL` (entry/exit timing) 🆕
    - `--price-targets SYMBOL` (profit targets) 🆕
+   - `--hold-or-sell SYMBOL --buy-price 500` (position advisor) 🆕
+   - `--ipo-exit SYMBOL` (IPO exit timing) 🆕
    - `--broker-intelligence --sector=hydro` (operator detection)
 
 ---
@@ -345,7 +392,11 @@ docs/
 3. **Want to Detect Pumps?**
    - Study [Broker Intelligence Guide](guides/BROKER_INTELLIGENCE_GUIDE.md)
 
-4. **Building Custom Strategy?**
+4. **Friend Asks "Should I Sell?"** 🆕
+   - Use [Position Advisor](position-advisor/) (get their buy price)
+   - Or [IPO Exit Analyzer](ipo-exit-analyzer/) (if newly listed)
+
+5. **Building Custom Strategy?**
    - Check [Technical Documentation](technical/)
 
 ---
@@ -353,4 +404,4 @@ docs/
 **Happy Trading! 🚀**
 
 *Documentation maintained by NEPSE AI Trading Engine Team*  
-*Last Updated: 2026-03-25*
+*Last Updated: 2026-03-26*
