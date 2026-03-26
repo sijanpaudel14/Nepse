@@ -9,20 +9,20 @@ Includes:
 - StrategyOptimizer: Parameter optimization with overfitting protection
 """
 
-from backtesting.engine import (
+from .engine import (
     SimpleBacktest,
     BacktestConfig,
     BacktestResult,
 )
 
-from backtesting.metrics import (
+from .metrics import (
     MetricsCalculator,
     BacktestMetrics,
     TradeResult,
     quick_metrics,
 )
 
-from backtesting.optimizer import (
+from .optimizer import (
     StrategyOptimizer,
     OptimizationResult,
     ParameterRange,

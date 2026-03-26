@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getIPOExit, type IPOExitResponse } from '@/lib/api';
 import { 
@@ -28,7 +28,15 @@ import {
   EmptyState,
   InfoBox,
   PriceChange,
+  ScanHistoryPanel,
 } from '@/components/ui';
+import {
+  loadScanHistory,
+  pushScanHistory,
+  removeScanHistoryItem,
+  clearScanHistory,
+  type ScanHistoryItem,
+} from '@/lib/scan-history';
 
 // Volume bar chart component
 function VolumeChart({ dates, volumes, trend }: { 
@@ -60,7 +68,7 @@ function VolumeChart({ dates, volumes, trend }: {
             <span className="text-xs font-mono w-16 text-right">
               {vol.toLocaleString()}
             </span>
-            {isSpike && <span className="text-xs text-warning">← SPIKE!</span>}
+            {isSpike && <span className="text-xs text-warning">Spike</span>}
           </div>
         );
       })}
@@ -124,10 +132,37 @@ function BrokerFlow({ flow }: { flow: IPOExitResponse['data']['broker_flow'] }) 
 }
 
 export default function IPOExitPage() {
+  const STORAGE_KEY = 'nepse-ipo-exit-state-v1';
+  const HISTORY_KEY = 'nepse-ipo-exit-history-v1';
   const [symbol, setSymbol] = useState('');
   const [searchSymbol, setSearchSymbol] = useState('');
+  const [hydrated, setHydrated] = useState(false);
+  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
-  const { data, isLoading, isError, error } = useQuery({
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.symbol === 'string') setSymbol(parsed.symbol);
+      if (typeof parsed.searchSymbol === 'string') setSearchSymbol(parsed.searchSymbol);
+    } catch {
+      // ignore invalid storage
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    setHistory(loadScanHistory(HISTORY_KEY));
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
+  }, [symbol, searchSymbol, hydrated]);
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['ipo-exit', searchSymbol],
     queryFn: () => getIPOExit({ symbol: searchSymbol }),
     enabled: !!searchSymbol,
@@ -135,8 +170,13 @@ export default function IPOExitPage() {
   });
 
   const handleSubmit = () => {
-    if (symbol.trim()) {
-      setSearchSymbol(symbol.trim().toUpperCase());
+    const clean = symbol.trim().toUpperCase();
+    if (!clean) return;
+    setHistory(pushScanHistory(HISTORY_KEY, { label: clean, value: clean }));
+    if (clean === searchSymbol) {
+      refetch();
+    } else {
+      setSearchSymbol(clean);
     }
   };
 
@@ -163,6 +203,22 @@ export default function IPOExitPage() {
           onSubmit={handleSubmit}
           placeholder="Enter IPO symbol (e.g., SOHL)"
           isLoading={isLoading}
+        />
+      </div>
+      <div className="max-w-md">
+        <ScanHistoryPanel
+          title="IPO Exit History"
+          items={history}
+          onSelect={(value) => {
+            setSymbol(value);
+            if (value === searchSymbol) refetch();
+            else setSearchSymbol(value);
+          }}
+          onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
+          onClear={() => {
+            clearScanHistory(HISTORY_KEY);
+            setHistory([]);
+          }}
         />
       </div>
 
@@ -208,8 +264,9 @@ export default function IPOExitPage() {
 
             {/* Status Row */}
             <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="rounded-lg bg-muted/20 p-4 text-center">
-                <ScoreCircle score={ipo.total_exit_score} label="Exit Score" size="sm" />
+              <div className="rounded-lg bg-muted/20 p-4 flex flex-col items-center justify-center">
+                <ScoreCircle score={ipo.total_exit_score} size="md" />
+                <p className="mt-2 text-xs font-medium text-muted-foreground">Exit Score</p>
               </div>
               <div className="rounded-lg bg-muted/20 p-4">
                 <p className="text-sm text-muted-foreground">Listing Price</p>
@@ -229,7 +286,7 @@ export default function IPOExitPage() {
           {/* Volume Trend */}
           <div className="rounded-xl border border-border bg-card p-5">
             <SectionHeader 
-              title="📈 Volume Trend" 
+              title="Volume Trend" 
               subtitle={`Trend: ${ipo.volume_trend.trend}`}
             />
             <VolumeChart 
@@ -245,15 +302,15 @@ export default function IPOExitPage() {
           {/* Broker Flow */}
           <div className="rounded-xl border border-border bg-card p-5">
             <SectionHeader 
-              title="🔍 Who's Trading?" 
-              subtitle="Broker flow analysis (1 week)"
+              title="Who's Trading?" 
+              subtitle={ipo.broker_flow.analysis_period ? `Broker flow analysis (${ipo.broker_flow.analysis_period})` : 'Broker flow analysis'}
             />
             <BrokerFlow flow={ipo.broker_flow} />
           </div>
 
           {/* Price Pattern */}
           <div className="rounded-xl border border-border bg-card p-5">
-            <SectionHeader title="📉 Price Pattern" />
+            <SectionHeader title="Price Pattern" />
             <div className="grid md:grid-cols-3 gap-4">
               <div className="rounded-lg bg-muted/20 p-4">
                 <p className="text-sm text-muted-foreground">Day 2 Low</p>
@@ -284,7 +341,7 @@ export default function IPOExitPage() {
           {/* Exit Signals */}
           <div className="rounded-xl border border-border bg-card p-5">
             <SectionHeader 
-              title="🚨 Exit Signals" 
+              title="Exit Signals" 
               subtitle={`Total Score: ${ipo.total_exit_score}/100`}
             />
             <div className="space-y-3">

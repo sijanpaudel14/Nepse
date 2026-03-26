@@ -1,7 +1,9 @@
 // API client for NEPSE AI Trading backend
 // Comprehensive API covering all paper_trader.py features
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// In deployed setup, frontend and backend are served behind same origin (`/api` ingress).
+// Fallback to same-origin unless an explicit external API URL is provided.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 interface ScanParams {
   strategy?: 'momentum' | 'value';
@@ -115,11 +117,44 @@ export async function analyzeStock(symbol: string, params: AnalyzeParams = {}, s
   return fetchAPI<AnalyzeResponse>(`/api/analyze/${symbol}?${searchParams}`, { signal });
 }
 
+export async function stopAnalyze(symbol: string) {
+  const encoded = encodeURIComponent(symbol);
+  return fetchAPI<{ success: boolean; message: string }>(`/api/analyze/stop/${encoded}`, {
+    method: 'POST',
+  });
+}
+
 // Add to Portfolio
 export async function addToPortfolio(symbol: string, quantity: number, price: number) {
-  return fetchAPI<{ success: boolean; trade_id: number }>('/api/portfolio/buy', {
+  return fetchAPI<{ success: boolean; trade_id: number; message?: string }>('/api/portfolio/buy', {
     method: 'POST',
     body: JSON.stringify({ symbol, quantity, price }),
+  });
+}
+
+// Edit existing portfolio position
+export async function editPortfolioPosition(
+  tradeId: number,
+  payload: { quantity?: number; entry_price?: number; target_price?: number; stop_loss?: number }
+) {
+  return fetchAPI<{ success: boolean; message: string }>(`/api/portfolio/position/${tradeId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+// Close a portfolio position manually
+export async function closePortfolioPosition(tradeId: number, exitPrice?: number) {
+  return fetchAPI<{ success: boolean; message: string }>(`/api/portfolio/sell/${tradeId}`, {
+    method: 'POST',
+    body: JSON.stringify({ exit_price: exitPrice }),
+  });
+}
+
+// Delete a portfolio position
+export async function deletePortfolioPosition(tradeId: number) {
+  return fetchAPI<{ success: boolean; message: string }>(`/api/portfolio/position/${tradeId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -335,12 +370,16 @@ export interface PillarScore {
 export interface SingleStockAnalysis {
   symbol: string;
   name: string;
+  company_name?: string;
   sector: string;
   ltp: number;
   momentum_score: number;
   value_score: number;
   momentum_verdict: string;
   value_verdict: string;
+  recommendation?: string;
+  verdict_reason?: string;
+  strategy?: string;
   pillars: Record<string, PillarScore>;
   pe_ratio: number;
   pe_status: string;
@@ -355,14 +394,31 @@ export interface SingleStockAnalysis {
   ema_signal: string;
   volume_spike: number;
   atr: number;
+  high_52w?: number;
+  low_52w?: number;
+  pct_from_52w_high?: number;
+  pct_from_52w_low?: number;
   distribution_risk: string;
   broker_avg_cost: number;
   broker_profit_pct: number;
   distribution_warning: string;
+  net_holdings_1m?: number;
+  net_holdings_1w?: number;
+  intraday_dump_detected?: boolean;
+  open_vs_broker_pct?: number;
+  close_vs_vwap_pct?: number;
+  intraday_volume_spike?: number;
   entry_price: number;
   target_price: number;
   stop_loss: number;
   hold_days: string;
+  expected_holding_days?: number;
+  max_holding_days?: number;
+  minimum_hold_period?: string;
+  risk_reward_ratio?: number;
+  execution_warning?: string;
+  support_level?: number;
+  resistance_level?: number;
   long_term_recommendation: string;
   short_term_recommendation: string;
   friend_recommendation: string;
@@ -371,6 +427,118 @@ export interface SingleStockAnalysis {
   price_trend_7d: number;
   price_trend_30d: number;
   price_trend_90d: number;
+  price_trend_1y?: number;
+  market_cap_cr?: number;
+  paid_up_capital_cr?: number;
+  outstanding_shares_cr?: number;
+  promoter_pct?: number;
+  public_pct?: number;
+  free_float_pct?: number;
+  daily_turnover_cr?: number;
+  full_report_text?: string;
+  strategy_comparison?: {
+    value?: {
+      score: number;
+      verdict: string;
+      pillars: {
+        broker: number;
+        unlock: number;
+        fundamental: number;
+        technical: number;
+        fundamental_max: number;
+        technical_max: number;
+      };
+    };
+    momentum?: {
+      score: number;
+      verdict: string;
+      pillars: {
+        broker: number;
+        unlock: number;
+        fundamental: number;
+        technical: number;
+        fundamental_max: number;
+        technical_max: number;
+      };
+    };
+  };
+  sector_comparison?: {
+    sector: string;
+    sector_avg_pe: number;
+    sector_avg_pbv: number;
+    sector_avg_roe: number;
+    pe_vs_sector_pct: number;
+    pbv_vs_sector_pct: number;
+    roe_vs_sector_pct: number;
+  };
+  dividend_history?: Array<{
+    fiscal_year: string;
+    cash_pct: number;
+    bonus_pct: number;
+    total_pct: number;
+  }>;
+  broker_activity?: {
+    data_period: string;
+    total_volume: number;
+    total_transactions: number;
+    top5_avg_cost: number;
+    top5_total_net: number;
+    brokers: Array<{
+      broker_code: string;
+      broker_name: string;
+      net_quantity: number;
+      buy_quantity: number;
+      sell_quantity: number;
+      avg_buy_price: number;
+    }>;
+  };
+  manipulation_risk?: {
+    score: number;
+    severity: string;
+    phase: string;
+    phase_description: string;
+    safe_to_trade: boolean;
+    hhi: number;
+    top3_control_pct: number;
+    circular_trading_pct: number;
+    wash_trading_detected: boolean;
+    alerts: string[];
+    veto_reasons: string[];
+  };
+  support_resistance?: {
+    supports: number[];
+    resistances: number[];
+    tip: string;
+  };
+  price_target_analysis?: {
+    conservative?: { level: number; upside_percent: number; probability: number; days_estimate: number };
+    moderate?: { level: number; upside_percent: number; probability: number; days_estimate: number };
+    aggressive?: { level: number; upside_percent: number; probability: number; days_estimate: number };
+    max_theory?: { level: number; upside_percent: number };
+    nearest_support: number;
+    downside_risk_pct: number;
+    risk_reward_ratio: number;
+    trend_direction: string;
+    momentum_score: number;
+    warnings: string[];
+  };
+  distribution_details?: {
+    risk_level: string;
+    avg_cost_1m: number;
+    avg_cost_1w: number;
+    net_holdings_1m: number;
+    net_holdings_1w: number;
+    divergence: boolean;
+    current_ltp: number;
+    broker_profit_pct: number;
+    intraday_dump_detected: boolean;
+    today_open_price: number;
+    today_vwap: number;
+    open_vs_broker_pct: number;
+    close_vs_vwap_pct: number;
+    intraday_volume_spike: number;
+    warning: string;
+  };
 }
 
 export interface AnalyzeResponse {
@@ -453,6 +621,7 @@ export interface IPOExitResponse {
     
     // Broker Flow
     broker_flow: {
+      analysis_period?: string;
       net_quantity: number;
       flow_type: 'STRONG_ACCUMULATION' | 'ACCUMULATION' | 'NEUTRAL' | 'DISTRIBUTION' | 'STRONG_DISTRIBUTION';
       interpretation: string;
@@ -501,6 +670,12 @@ export interface PositionAdvisorResponse {
       pnl_pct: number;
       holding_period: string;
       days_held: number;
+      trading_days_held?: number;
+      example_100_shares?: {
+        invested: number;
+        current_value: number;
+        pnl_amount: number;
+      };
     };
     
     // Technical Position
@@ -510,10 +685,33 @@ export interface PositionAdvisorResponse {
       support: number;
       resistance: number;
       rsi: number;
+      trend_strength?: number;
+      volume_trend?: string;
+      ema_above_count?: number;
+      ema_total?: number;
+      ema_alignment?: string;
+    };
+
+    support_resistance?: {
+      immediate_support: number;
+      strong_support: number;
+      immediate_resistance: number;
+      strong_resistance: number;
+      entry_vs_support: string;
+      support_distance_pct: number;
+      resistance_distance_pct: number;
+    };
+
+    risk_reward?: {
+      risk_to_support_pct: number;
+      reward_to_resistance_pct: number;
+      ratio: number;
+      favorable: boolean;
     };
     
     // Health Score
     health_score: number;
+    health_grade?: string;
     health_breakdown: Array<{
       factor: string;
       score: number;
@@ -523,13 +721,18 @@ export interface PositionAdvisorResponse {
     
     // Verdict
     verdict: 'STRONG_HOLD' | 'HOLD' | 'HOLD_CAUTIOUSLY' | 'BOOK_PARTIAL' | 'AVERAGE_DOWN' | 'EXIT' | 'URGENT_EXIT';
+    verdict_text?: string;
     verdict_emoji: string;
     
     // Recommendations
     actions: string[];
     exit_triggers: string[];
+    hold_checklist?: string[];
     stop_loss: number;
     targets: Array<{ level: string; price: number; gain_pct: number }>;
+    trade_plan?: {
+      stop_loss_pct_from_current: number;
+    };
     
     warnings: string[];
   };
@@ -628,19 +831,20 @@ export interface SectorRotationResponse {
   success: boolean;
   timestamp: string;
   data: {
-    ranking: Array<{
-      rank: number;
-      sector: string;
-      momentum_score: number;
-      weekly_change_pct: number;
-      monthly_change_pct: number;
-      signal: 'STRONG_BUY' | 'BUY' | 'HOLD' | 'SELL' | 'STRONG_SELL';
-      signal_emoji: string;
-    }>;
-    
     rotation_signal: string;
     hot_sectors: string[];
     cold_sectors: string[];
+    
+    sectors: Array<{
+      name: string;
+      avg_change: number;
+      advancing: number;
+      declining: number;
+      total: number;
+      momentum_score: number;
+      status: 'HOT' | 'COLD' | 'NEUTRAL';
+      rank: number;
+    }>;
   };
 }
 
@@ -650,17 +854,20 @@ export interface PositioningResponse {
   timestamp: string;
   data: {
     overall: {
-      stocks_above_sma20_pct: number;
-      stocks_above_sma50_pct: number;
-      stocks_above_sma200_pct: number;
-      market_condition: 'OVERBOUGHT' | 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'OVERSOLD';
+      above_sma20: number;
+      above_sma50: number;
+      above_sma200: number;
+      condition: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+      interpretation: string;
+      stocks_analyzed: number;
     };
     
     sectors: Array<{
-      sector: string;
-      above_sma20_pct: number;
-      above_sma50_pct: number;
-      condition: string;
+      name: string;
+      above_sma20: number;
+      above_sma50: number;
+      above_sma200: number;
+      bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     }>;
   };
 }
@@ -670,19 +877,27 @@ export interface BrokerIntelligenceResponse {
   success: boolean;
   timestamp: string;
   data: {
-    aggressive_brokers: Array<{
-      broker: string;
-      total_buying: number;
-      stocks: Array<{ symbol: string; quantity: number }>;
+    summary: {
+      active_brokers: number;
+      accumulating: number;
+      distributing: number;
+      market_sentiment: string;
+    };
+    
+    brokers: Array<{
+      name: string;
+      activity: 'ACCUMULATING' | 'DISTRIBUTING';
+      volume: number;
+      value: number;
+      top_stocks: string[];
     }>;
     
     stockwise: Array<{
       symbol: string;
-      top_buyer: string;
-      buyer_quantity: number;
-      top_seller: string;
-      seller_quantity: number;
       net_flow: number;
+      buy_brokers: number;
+      sell_brokers: number;
+      concentration: 'HIGH' | 'MEDIUM' | 'LOW';
     }>;
   };
 }
@@ -693,16 +908,28 @@ export interface TechScoreResponse {
   timestamp: string;
   data: {
     symbol: string;
-    composite_score: number;
+    current_price: number;
+    total_score: number;
+    max_score: number;
+    verdict: 'STRONG BUY' | 'BUY' | 'NEUTRAL' | 'WEAK' | 'AVOID';
+    color: 'bull' | 'bear' | 'warning';
     
-    timeframes: Array<{
-      timeframe: string;
+    components: Array<{
+      name: string;
       score: number;
-      trend: string;
-      signals: string[];
+      max: number;
+      details: string;
     }>;
     
-    overall_signal: string;
+    indicators: {
+      ema_9: number;
+      ema_21: number;
+      ema_50: number;
+      ema_200: number;
+      rsi: number;
+      macd_histogram: number;
+      volume_ratio: number;
+    };
   };
 }
 
@@ -713,19 +940,27 @@ export interface PriceTargetsResponse {
   data: {
     symbol: string;
     current_price: number;
+    recent_high: number;
+    recent_low: number;
+    atr_14: number;
+    trend_strength: number;
+    
+    fibonacci_levels: Record<string, number>;
     
     targets: Array<{
+      type: 'stop' | 'target';
+      label: string;
+      price: number;
+      pct: number;
+      probability: number | null;
       method: string;
-      target_price: number;
-      upside_pct: number;
-      confidence: number;
     }>;
     
-    support_levels: number[];
-    resistance_levels: number[];
-    
-    consensus_target: number;
-    consensus_upside_pct: number;
+    volume_profile: Array<{
+      price: number;
+      volume: number;
+      pct_of_total: number;
+    }>;
   };
 }
 
@@ -735,27 +970,39 @@ export interface OrderFlowResponse {
   timestamp: string;
   data: {
     symbol: string;
+    current_price: number;
+    flow_bias: 'BUYING PRESSURE' | 'SELLING PRESSURE' | 'NEUTRAL';
+    bias_color: 'bull' | 'bear' | 'warning';
+    cumulative_delta: number;
     
-    delta: {
+    delta_bars: Array<{
+      date: string;
+      close: number;
+      volume: number;
       buy_volume: number;
       sell_volume: number;
-      net_delta: number;
-      delta_pct: number;
-    };
-    
-    absorption: {
-      detected: boolean;
-      type: 'BUYING' | 'SELLING' | 'NONE';
-      strength: number;
-    };
-    
-    liquidity_grabs: Array<{
-      date: string;
-      type: 'LOW_GRAB' | 'HIGH_GRAB';
-      price: number;
+      delta: number;
+      delta_pct?: number;
+      close_change_pct?: number;
+      cumulative_delta: number;
     }>;
     
-    signal: string;
+    price_levels: Array<{
+      price: number;
+      buy_volume: number;
+      sell_volume: number;
+      net: number;
+    }>;
+    
+    absorptions: Array<{
+      date: string;
+      volume_ratio: number;
+      price_change: number;
+      close_to_close_pct?: number;
+      intraday_range_pct?: number;
+      movement_source?: string;
+      type: string;
+    }>;
   };
 }
 
@@ -764,15 +1011,26 @@ export interface BulkDealsResponse {
   success: boolean;
   timestamp: string;
   data: {
+    summary: {
+      total_deals: number;
+      buy_deals: number;
+      sell_deals: number;
+      buy_value: number;
+      sell_value: number;
+      total_value: number;
+    };
+    
     deals: Array<{
-      date: string;
       symbol: string;
-      buyer: string;
-      seller: string;
+      name: string;
       quantity: number;
-      rate: number;
+      price: number;
       value: number;
-      signal: 'INSIDER_BUY' | 'INSIDER_SELL' | 'BLOCK_DEAL' | 'PROMOTER_ACTIVITY';
+      deal_type: 'BUY' | 'SELL';
+      buyer_broker?: string;
+      seller_broker?: string;
+      date: string;
+      significance: 'HIGH' | 'MEDIUM' | 'LOW';
     }>;
   };
 }
@@ -783,20 +1041,24 @@ export interface DividendForecastResponse {
   timestamp: string;
   data: {
     symbol: string;
+    company_name: string;
+    current_price: number;
+    eps: number;
+    book_value: number;
+    pe_ratio: number;
+    current_yield: number;
+    forecasted_yield: number;
+    forecasted_dividend: number;
+    dividend_status: 'REGULAR' | 'IRREGULAR' | 'RARE';
     
-    historical: Array<{
+    history: Array<{
       year: string;
-      dividend_pct: number;
-      eps: number;
+      dividend: number;
     }>;
     
-    forecast: {
-      expected_dividend_pct: number;
-      expected_amount_per_share: number;
-      yield_on_current_price: number;
-      confidence: number;
-    };
-    
-    recommendation: string;
+    strengths: string[];
+    risks: string[];
+    verdict: 'BUY' | 'HOLD' | 'NEUTRAL';
+    reasoning: string;
   };
 }

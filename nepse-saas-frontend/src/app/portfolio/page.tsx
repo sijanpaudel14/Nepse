@@ -2,7 +2,15 @@
 
 import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getPortfolioStatus, updatePortfolio, type PortfolioPosition } from '@/lib/api';
+import {
+  addToPortfolio,
+  closePortfolioPosition,
+  deletePortfolioPosition,
+  editPortfolioPosition,
+  getPortfolioStatus,
+  updatePortfolio,
+  type PortfolioPosition,
+} from '@/lib/api';
 import { 
   Wallet,
   TrendingUp,
@@ -14,6 +22,9 @@ import {
   Clock,
   DollarSign,
   BarChart3,
+  Pencil,
+  Plus,
+  Trash2,
   XCircle,
   CheckCircle,
 } from 'lucide-react';
@@ -131,7 +142,17 @@ function ProgressBar({ current, entry, target, stop }: {
 }
 
 // Positions Table
-function PositionsTable({ positions }: { positions: PortfolioPosition[] }) {
+function PositionsTable({
+  positions,
+  onEdit,
+  onClose,
+  onDelete,
+}: {
+  positions: PortfolioPosition[];
+  onEdit?: (position: PortfolioPosition) => void;
+  onClose?: (position: PortfolioPosition) => void;
+  onDelete?: (position: PortfolioPosition) => void;
+}) {
   if (positions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-12">
@@ -210,13 +231,45 @@ function PositionsTable({ positions }: { positions: PortfolioPosition[] }) {
               <td className="px-4 py-4 text-center">
                 <PositionStatus status={pos.status} daysHeld={pos.days_held} />
               </td>
-              <td className="px-4 py-4 text-center">
-                <Link
-                  href={`/analyze?symbol=${pos.symbol}`}
-                  className="text-sm text-primary hover:underline"
-                >
-                  View Analysis
-                </Link>
+              <td className="px-4 py-4">
+                <div className="flex items-center justify-center gap-2">
+                  {onEdit && (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(pos)}
+                      className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-card-hover"
+                    >
+                      <Pencil className="h-3 w-3" />
+                      Edit
+                    </button>
+                  )}
+                  {onClose && pos.status === 'OPEN' && (
+                    <button
+                      type="button"
+                      onClick={() => onClose(pos)}
+                      className="inline-flex items-center gap-1 rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-xs text-warning hover:bg-warning/20"
+                    >
+                      <XCircle className="h-3 w-3" />
+                      Close
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      type="button"
+                      onClick={() => onDelete(pos)}
+                      className="inline-flex items-center gap-1 rounded-md border border-bear/40 bg-bear/10 px-2 py-1 text-xs text-bear hover:bg-bear/20"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Delete
+                    </button>
+                  )}
+                  <Link
+                    href={`/analyze?symbol=${pos.symbol}`}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Analyze
+                  </Link>
+                </div>
               </td>
             </tr>
           ))}
@@ -231,6 +284,15 @@ export default function PortfolioPage() {
   const [updateFeedback, setUpdateFeedback] = useState<{ success: boolean; message: string } | null>(null);
   const updateAbortRef = useRef<AbortController | null>(null);
   const [isUpdateRunning, setIsUpdateRunning] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addSymbol, setAddSymbol] = useState('');
+  const [addQuantity, setAddQuantity] = useState('10');
+  const [addPrice, setAddPrice] = useState('');
+  const [editingPosition, setEditingPosition] = useState<PortfolioPosition | null>(null);
+  const [editQuantity, setEditQuantity] = useState('');
+  const [editEntryPrice, setEditEntryPrice] = useState('');
+  const [editTargetPrice, setEditTargetPrice] = useState('');
+  const [editStopLoss, setEditStopLoss] = useState('');
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['portfolio'],
@@ -266,6 +328,82 @@ export default function PortfolioPage() {
     },
   });
 
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const symbol = addSymbol.trim().toUpperCase();
+      const quantity = Number(addQuantity);
+      const price = Number(addPrice);
+      if (symbol.length < 3) throw new Error('Enter a valid symbol');
+      if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be greater than 0');
+      if (!Number.isFinite(price) || price <= 0) throw new Error('Entry price must be greater than 0');
+      return addToPortfolio(symbol, quantity, price);
+    },
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+      setUpdateFeedback({ success: true, message: res.message || 'Position added to portfolio' });
+      setShowAddForm(false);
+      setAddSymbol('');
+      setAddQuantity('10');
+      setAddPrice('');
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+    onError: (error) => {
+      setUpdateFeedback({ success: false, message: error instanceof Error ? error.message : 'Failed to add position' });
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+  });
+
+  const editMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingPosition) throw new Error('No position selected');
+      const quantity = Number(editQuantity);
+      const entry_price = Number(editEntryPrice);
+      const target_price = Number(editTargetPrice);
+      const stop_loss = Number(editStopLoss);
+      if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Quantity must be greater than 0');
+      if (!Number.isFinite(entry_price) || entry_price <= 0) throw new Error('Entry price must be greater than 0');
+      if (!Number.isFinite(target_price) || target_price <= 0) throw new Error('Target must be greater than 0');
+      if (!Number.isFinite(stop_loss) || stop_loss <= 0) throw new Error('Stop loss must be greater than 0');
+      return editPortfolioPosition(editingPosition.id, { quantity, entry_price, target_price, stop_loss });
+    },
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+      setUpdateFeedback({ success: true, message: res.message || 'Position updated' });
+      setEditingPosition(null);
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+    onError: (error) => {
+      setUpdateFeedback({ success: false, message: error instanceof Error ? error.message : 'Failed to update position' });
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+  });
+
+  const closeMutation = useMutation({
+    mutationFn: async (position: PortfolioPosition) => closePortfolioPosition(position.id),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+      setUpdateFeedback({ success: true, message: res.message || 'Position closed' });
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+    onError: (error) => {
+      setUpdateFeedback({ success: false, message: error instanceof Error ? error.message : 'Failed to close position' });
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (position: PortfolioPosition) => deletePortfolioPosition(position.id),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+      setUpdateFeedback({ success: true, message: res.message || 'Position deleted' });
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+    onError: (error) => {
+      setUpdateFeedback({ success: false, message: error instanceof Error ? error.message : 'Failed to delete position' });
+      setTimeout(() => setUpdateFeedback(null), 4000);
+    },
+  });
+
   const handleUpdate = () => {
     updateMutation.mutate();
   };
@@ -281,6 +419,14 @@ export default function PortfolioPage() {
       });
       setTimeout(() => setUpdateFeedback(null), 3000);
     }
+  };
+
+  const handleEditOpen = (position: PortfolioPosition) => {
+    setEditingPosition(position);
+    setEditQuantity(String(position.quantity));
+    setEditEntryPrice(String(position.entry_price));
+    setEditTargetPrice(String(position.target_price));
+    setEditStopLoss(String(position.stop_loss));
   };
 
   const stats = data?.stats;
@@ -328,6 +474,13 @@ export default function PortfolioPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowAddForm((v) => !v)}
+            className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium transition-colors hover:bg-card-hover"
+          >
+            <Plus className="h-4 w-4" />
+            Add Position
+          </button>
+          <button
             onClick={handleUpdate}
             disabled={updateMutation.isPending || isUpdateRunning}
             className={cn(
@@ -357,6 +510,116 @@ export default function PortfolioPage() {
           </button>
         </div>
       </div>
+
+      {showAddForm && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-lg font-semibold">Add Position</h3>
+          <div className="grid gap-3 md:grid-cols-4">
+            <input
+              value={addSymbol}
+              onChange={(e) => setAddSymbol(e.target.value.toUpperCase())}
+              placeholder="Symbol (e.g. NABIL)"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <input
+              value={addQuantity}
+              onChange={(e) => setAddQuantity(e.target.value)}
+              placeholder="Quantity"
+              type="number"
+              min={1}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <input
+              value={addPrice}
+              onChange={(e) => setAddPrice(e.target.value)}
+              placeholder="Entry Price"
+              type="number"
+              min={0.01}
+              step="0.01"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => addMutation.mutate()}
+                disabled={addMutation.isPending}
+                className={cn(
+                  'rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground',
+                  addMutation.isPending && 'opacity-50'
+                )}
+              >
+                {addMutation.isPending ? 'Adding...' : 'Save'}
+              </button>
+              <button
+                onClick={() => setShowAddForm(false)}
+                className="rounded-lg border border-border px-3 py-2 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingPosition && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-lg font-semibold">Edit Position: {editingPosition.symbol}</h3>
+          <div className="grid gap-3 md:grid-cols-5">
+            <input
+              value={editQuantity}
+              onChange={(e) => setEditQuantity(e.target.value)}
+              placeholder="Quantity"
+              type="number"
+              min={1}
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <input
+              value={editEntryPrice}
+              onChange={(e) => setEditEntryPrice(e.target.value)}
+              placeholder="Entry Price"
+              type="number"
+              min={0.01}
+              step="0.01"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <input
+              value={editTargetPrice}
+              onChange={(e) => setEditTargetPrice(e.target.value)}
+              placeholder="Target"
+              type="number"
+              min={0.01}
+              step="0.01"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <input
+              value={editStopLoss}
+              onChange={(e) => setEditStopLoss(e.target.value)}
+              placeholder="Stop Loss"
+              type="number"
+              min={0.01}
+              step="0.01"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => editMutation.mutate()}
+                disabled={editMutation.isPending}
+                className={cn(
+                  'rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground',
+                  editMutation.isPending && 'opacity-50'
+                )}
+              >
+                {editMutation.isPending ? 'Saving...' : 'Update'}
+              </button>
+              <button
+                onClick={() => setEditingPosition(null)}
+                className="rounded-lg border border-border px-3 py-2 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       {stats && (
@@ -406,7 +669,12 @@ export default function PortfolioPage() {
           <h2 className="text-xl font-semibold">
             Open Positions ({openPositions.length})
           </h2>
-          <PositionsTable positions={openPositions} />
+          <PositionsTable
+            positions={openPositions}
+            onEdit={handleEditOpen}
+            onClose={(position) => closeMutation.mutate(position)}
+            onDelete={(position) => deleteMutation.mutate(position)}
+          />
         </div>
       )}
 
@@ -417,7 +685,10 @@ export default function PortfolioPage() {
             Recently Closed ({closedPositions.length})
           </h2>
           <div className="opacity-75">
-            <PositionsTable positions={closedPositions} />
+            <PositionsTable
+              positions={closedPositions}
+              onDelete={(position) => deleteMutation.mutate(position)}
+            />
           </div>
         </div>
       )}

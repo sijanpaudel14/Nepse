@@ -1,8 +1,7 @@
 {
-  "/_not-found/page": "app/_not-found/page.js",
-  "/scanner/page": "app/scanner/page.js",
   "/analyze/page": "app/analyze/page.js",
-  "/stealth/page": "app/stealth/page.js",
-  "/portfolio/page": "app/portfolio/page.js",
-  "/page": "app/page.js"
+  "/signal/page": "app/signal/page.js",
+  "/page": "app/page.js",
+  "/broker-intel/page": "app/broker-intel/page.js",
+  "/portfolio/page": "app/portfolio/page.js"
 }

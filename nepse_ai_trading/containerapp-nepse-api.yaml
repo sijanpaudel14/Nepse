@@ -1,0 +1,46 @@
+apiVersion: 2022-10-01
+type: Microsoft.App/containerapps
+location: southeastasia
+properties:
+  managedEnvironmentId: $(az containerapp env show --name cae-nepse-student --resource-group rg-nepse-student --query id -o tsv)
+  configuration:
+    ingress:
+      external: true
+      targetPort: 8000
+      traffic:
+        - latestRevisionEndpoint: true
+          weightPercent: 100
+  template:
+    containers:
+      - name: nepse-api
+        image: ghcr.io/sijanpaudel14/nepse-api:1.0
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        volumeMounts:
+          - volumeName: nepsefiles
+            mountPath: /mnt/data
+        env:
+          - name: DATABASE_URL
+            value: sqlite:////mnt/data/nepse.db
+          - name: OPENAI_API_KEY
+            value: $(echo $OPENAI_API_KEY)
+          - name: OPENAI_MODEL
+            value: gpt-4o-mini
+          - name: TELEGRAM_BOT_TOKEN
+            value: $(echo $TELEGRAM_BOT_TOKEN)
+          - name: TELEGRAM_CHAT_ID
+            value: $(echo $TELEGRAM_CHAT_ID)
+          - name: SERVICE_PORT
+            value: "8000"
+          - name: ENVIRONMENT
+            value: production
+          - name: LOG_LEVEL
+            value: INFO
+    volumes:
+      - name: nepsefiles
+        storageType: AzureFile
+        storageName: nepsefiles
+  scale:
+    minReplicaCount: 0
+    maxReplicaCount: 1

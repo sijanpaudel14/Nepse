@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getHeatmap, type HeatmapResponse } from '@/lib/api';
 import { 
@@ -15,8 +16,16 @@ import {
   SectionHeader,
   EmptyState,
   InfoBox,
+  ScanHistoryPanel,
 } from '@/components/ui';
 import Link from 'next/link';
+import {
+  loadScanHistory,
+  pushScanHistory,
+  removeScanHistoryItem,
+  clearScanHistory,
+  type ScanHistoryItem,
+} from '@/lib/scan-history';
 
 // Get color based on change percentage
 function getChangeColor(change: number): string {
@@ -104,6 +113,13 @@ function StatCard({ label, value, change, icon: Icon }: {
 }
 
 export default function HeatmapPage() {
+  const HISTORY_KEY = 'nepse-heatmap-history-v1';
+  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
+
+  useEffect(() => {
+    setHistory(loadScanHistory(HISTORY_KEY));
+  }, []);
+
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['heatmap'],
     queryFn: () => getHeatmap(),
@@ -128,7 +144,15 @@ export default function HeatmapPage() {
         </div>
         
         <button
-          onClick={() => refetch()}
+          onClick={() => {
+            setHistory(
+              pushScanHistory(HISTORY_KEY, {
+                label: 'Market Heatmap Refresh',
+                value: 'refresh',
+              })
+            );
+            refetch();
+          }}
           disabled={isLoading}
           className="btn-secondary"
         >
@@ -138,6 +162,18 @@ export default function HeatmapPage() {
             'Refresh'
           )}
         </button>
+      </div>
+      <div className="max-w-xl">
+        <ScanHistoryPanel
+          title="Heatmap History"
+          items={history}
+          onSelect={() => refetch()}
+          onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
+          onClear={() => {
+            clearScanHistory(HISTORY_KEY);
+            setHistory([]);
+          }}
+        />
       </div>
 
       {/* Loading State */}

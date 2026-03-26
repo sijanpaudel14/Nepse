@@ -12,7 +12,7 @@ MILLIONAIRE RULES (embedded in this module):
 5. Review after 5 consecutive losses
 """
 
-from risk.position_sizer import (
+from .position_sizer import (
     PositionSizer,
     PositionSize,
     SizingMethod,
@@ -20,14 +20,14 @@ from risk.position_sizer import (
     how_many_shares,
 )
 
-from risk.portfolio_manager import (
+from .portfolio_manager import (
     PortfolioManager,
     Position,
     PositionStatus,
     PortfolioSnapshot,
 )
 
-from risk.risk_limits import (
+from .risk_limits import (
     RiskManager,
     RiskLimits,
     RiskState,

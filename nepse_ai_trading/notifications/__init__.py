@@ -6,8 +6,8 @@ Handles all alert delivery:
 - Email: Daily summaries and important alerts
 """
 
-from notifications.telegram_bot import TelegramNotifier, send_telegram_alert
-from notifications.email_sender import EmailNotifier, send_email_alert
+from .telegram_bot import TelegramNotifier, send_telegram_alert
+from .email_sender import EmailNotifier, send_email_alert
 
 __all__ = [
     # Telegram

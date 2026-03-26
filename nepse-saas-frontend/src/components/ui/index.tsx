@@ -1,6 +1,7 @@
 // Shared UI Components for NEPSE AI Trading Terminal
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { 
   Loader2, 
@@ -14,6 +15,11 @@ import {
   Clock,
   Target,
   Shield,
+  ChevronDown,
+  Check,
+  History,
+  X,
+  Trash2,
 } from 'lucide-react';
 
 // ============== LOADING STATES ==============
@@ -229,6 +235,71 @@ export function ScoreBar({
           style={{ width: `${percentage}%` }}
         />
       </div>
+    </div>
+  );
+}
+
+export function PrettySelect({
+  value,
+  onChange,
+  options,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = options.find((option) => option.value === value) || options[0];
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div ref={rootRef} className={cn('relative min-w-[220px]', className)}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex h-10 w-full items-center justify-between rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-card-hover focus:outline-none focus:ring-2 focus:ring-primary/40"
+      >
+        <span className="truncate">{selected?.label || 'Select'}</span>
+        <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-elegant">
+          {options.map((option) => {
+            const isSelected = option.value === value;
+            return (
+              <button
+                key={option.value || '__all'}
+                type="button"
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  'flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors',
+                  isSelected ? 'bg-primary/15 text-primary' : 'text-foreground hover:bg-card-hover'
+                )}
+              >
+                <span className="truncate">{option.label}</span>
+                {isSelected && <Check className="h-4 w-4" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -582,5 +653,111 @@ export function DateInput({
         className="w-full rounded-lg border border-border bg-card px-4 py-2.5 text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
       />
     </div>
+  );
+}
+
+export function ScanHistoryPanel({
+  title = 'Recent Scans',
+  items,
+  onSelect,
+  onDelete,
+  onClear,
+}: {
+  title?: string;
+  items: Array<{ id: string; label: string; value: string; timestamp: number }>;
+  onSelect: (value: string) => void;
+  onDelete: (id: string) => void;
+  onClear?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="fixed right-6 top-6 z-40 inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground shadow-elegant hover:bg-card-hover"
+      >
+        <History className="h-4 w-4 text-primary" />
+        History
+      </button>
+
+      {open && (
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40"
+          aria-label="Close history panel"
+        />
+      )}
+
+      <aside
+        className={cn(
+          'fixed right-0 top-0 z-50 h-full w-full max-w-sm border-l border-border bg-card p-4 shadow-elegant transition-transform duration-300',
+          open ? 'translate-x-0' : 'translate-x-full'
+        )}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold">{title}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-card-hover hover:text-foreground"
+            aria-label="Close history"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            {items.length ? `${items.length} saved scans` : 'No saved scans yet'}
+          </p>
+          {onClear && items.length > 0 && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-2 overflow-y-auto pb-4">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="flex items-center justify-between gap-2 rounded-lg border border-border/70 bg-card-hover px-3 py-2"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  onSelect(item.value);
+                  setOpen(false);
+                }}
+                className="min-w-0 flex-1 text-left"
+              >
+                <p className="truncate text-sm font-medium">{item.label}</p>
+                <p className="text-xs text-muted-foreground">
+                  {new Date(item.timestamp).toLocaleString()}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(item.id)}
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-bear/10 hover:text-bear"
+                aria-label={`Delete scan ${item.label}`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </aside>
+    </>
   );
 }

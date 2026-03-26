@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   Search,
@@ -27,6 +27,8 @@ import {
   HelpCircle,
   BookOpen,
   Scale,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -106,7 +108,7 @@ const navigationGroups: NavGroup[] = [
   },
 ];
 
-function NavGroupComponent({ group }: { group: NavGroup }) {
+function NavGroupComponent({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(group.defaultOpen ?? false);
   
@@ -119,54 +121,80 @@ function NavGroupComponent({ group }: { group: NavGroup }) {
 
   return (
     <div className="mb-1">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-          hasActiveItem
-            ? 'bg-primary-muted/50 text-primary'
-            : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
-        )}
-      >
-        <div className="flex items-center gap-2">
-          <group.icon className="h-4 w-4" />
-          <span>{group.name}</span>
-        </div>
-        {isOpen ? (
-          <ChevronDown className="h-4 w-4" />
-        ) : (
-          <ChevronRight className="h-4 w-4" />
-        )}
-      </button>
-      
-      {isOpen && (
-        <div className="mt-1 ml-3 space-y-0.5 border-l border-border pl-3">
+      {!collapsed ? (
+        <>
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className={cn(
+              'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+              hasActiveItem
+                ? 'bg-primary-muted/50 text-primary'
+                : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
+            )}
+            title={group.name}
+          >
+            <div className="flex items-center gap-2">
+              <group.icon className="h-4 w-4" />
+              <span>{group.name}</span>
+            </div>
+            {isOpen ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+
+          {isOpen && (
+            <div className="mt-1 ml-3 space-y-0.5 border-l border-border pl-3">
+              {group.items.map((item) => {
+                const isActive = pathname === item.href;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      'group flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-200',
+                      isActive
+                        ? 'bg-primary-muted text-primary font-medium'
+                        : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
+                    )}
+                  >
+                    <item.icon className={cn(
+                      'h-4 w-4 transition-colors',
+                      isActive ? 'text-primary' : 'group-hover:text-foreground'
+                    )} />
+                    <span className="flex-1">{item.name}</span>
+                    {item.badge && (
+                      <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-bold text-primary">
+                        {item.badge}
+                      </span>
+                    )}
+                    {isActive && (
+                      <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-glow-sm" />
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="space-y-1">
           {group.items.map((item) => {
             const isActive = pathname === item.href;
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                title={item.name}
                 className={cn(
-                  'group flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all duration-200',
+                  'flex w-full items-center justify-center rounded-lg px-2 py-2 transition-colors',
                   isActive
-                    ? 'bg-primary-muted text-primary font-medium'
+                    ? 'bg-primary-muted text-primary'
                     : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
                 )}
               >
-                <item.icon className={cn(
-                  'h-4 w-4 transition-colors',
-                  isActive ? 'text-primary' : 'group-hover:text-foreground'
-                )} />
-                <span className="flex-1">{item.name}</span>
-                {item.badge && (
-                  <span className="rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] font-bold text-primary">
-                    {item.badge}
-                  </span>
-                )}
-                {isActive && (
-                  <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-glow-sm" />
-                )}
+                <item.icon className="h-4 w-4" />
               </Link>
             );
           })}
@@ -177,25 +205,57 @@ function NavGroupComponent({ group }: { group: NavGroup }) {
 }
 
 export function Sidebar() {
-  const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setCollapsed(window.localStorage.getItem('nepse-sidebar-collapsed-v1') === '1');
+    } catch {
+      setCollapsed(false);
+    }
+  }, []);
+  const widthClass = collapsed ? 'w-20' : 'w-64';
 
   return (
-    <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r border-border bg-surface-1">
+    <aside className={cn('fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-surface-1 transition-all', widthClass)}>
       {/* Logo */}
-      <div className="flex h-16 items-center gap-3 border-b border-border px-4">
+      <div className={cn('flex h-16 items-center border-b border-border px-4', collapsed ? 'justify-center' : 'gap-3')}>
         <div className="rounded-lg bg-gradient-to-br from-primary to-primary/60 p-2 shadow-glow-sm">
           <Activity className="h-5 w-5 text-primary-foreground" />
         </div>
-        <div>
+        {!collapsed && <div>
           <h1 className="text-base font-bold tracking-tight text-foreground">NEPSE AI</h1>
           <p className="text-[10px] text-muted-foreground">Trading Terminal v2.0</p>
-        </div>
+        </div>}
+      </div>
+
+      <div className="border-b border-border p-2">
+        <button
+          type="button"
+          onClick={() => {
+            setCollapsed((v) => {
+              const next = !v;
+              try {
+                window.localStorage.setItem('nepse-sidebar-collapsed-v1', next ? '1' : '0');
+              } catch {
+                // ignore storage write issues
+              }
+              return next;
+            });
+          }}
+          className={cn('inline-flex w-full items-center rounded-lg px-2 py-2 text-sm text-muted-foreground hover:bg-surface-2 hover:text-foreground', collapsed ? 'justify-center' : 'gap-2')}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          {!collapsed && <span>Collapse</span>}
+        </button>
       </div>
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-3">
         {navigationGroups.map((group) => (
-          <NavGroupComponent key={group.name} group={group} />
+          <NavGroupComponent key={group.name} group={group} collapsed={collapsed} />
         ))}
       </nav>
 
@@ -203,20 +263,21 @@ export function Sidebar() {
       <div className="border-t border-border p-3">
         <Link
           href="/help"
-          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors"
+          className={cn('flex items-center rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-surface-2 hover:text-foreground transition-colors', collapsed ? 'justify-center' : 'gap-2')}
+          title="Help & Docs"
         >
           <HelpCircle className="h-4 w-4" />
-          <span>Help & Docs</span>
+          {!collapsed && <span>Help & Docs</span>}
         </Link>
       </div>
 
       {/* Footer */}
       <div className="border-t border-border p-4">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className={cn('flex items-center text-xs text-muted-foreground', collapsed ? 'justify-center' : 'gap-2')}>
           <div className="h-2 w-2 rounded-full bg-primary animate-pulse shadow-glow-sm" />
-          <span>API Connected</span>
+          {!collapsed && <span>API Connected</span>}
         </div>
-        <p className="mt-2 text-[10px] text-muted">v2.0.0 • Educational Use Only</p>
+        {!collapsed && <p className="mt-2 text-[10px] text-muted">v2.0.0 • Educational Use Only</p>}
       </div>
     </aside>
   );

@@ -324,8 +324,95 @@ class IPOExitAnalyzer:
                     return float(quote.ltp)
         except Exception as e:
             logger.debug(f"ShareHub quote failed: {e}")
+
+        # Method 3: ShareHub price-history latest bar (often updates faster than NEPSE history API)
+        try:
+            if self.sharehub:
+                bars = self.sharehub.get_price_history(symbol.upper(), limit=2)
+                if bars:
+                    latest = bars[0]
+                    ltp = latest.get("close")
+                    if ltp and float(ltp) > 0:
+                        return float(ltp)
+        except Exception as e:
+            logger.debug(f"ShareHub price-history LTP failed: {e}")
         
         return None
+    
+    def _fetch_today_data(self, symbol: str) -> Optional[Dict]:
+        """Fetch today's intraday data (LTP + volume)."""
+        try:
+            if self.fetcher:
+                live_df = self.fetcher.fetch_live_market()
+                if live_df is not None and not live_df.empty:
+                    symbol_upper = symbol.upper()
+                    match = live_df[live_df['symbol'].str.upper() == symbol_upper]
+                    if not match.empty:
+                        row = match.iloc[0]
+                        return {
+                            'date': datetime.now().strftime('%Y-%m-%d'),
+                            'ltp': float(row.get('close') or row.get('ltp', 0)),
+                            'volume': int(row.get('volume', 0) or row.get('totalTradedQty', 0)),
+                            'open': float(row.get('open', row.get('ltp', 0))),
+                            'high': float(row.get('high', row.get('ltp', 0))),
+                            'low': float(row.get('low', row.get('ltp', 0))),
+                        }
+        except Exception as e:
+            logger.debug(f"Failed to fetch today's data: {e}")
+
+        # Fallback: ShareHub latest daily bar can carry today's ongoing volume/ltp.
+        try:
+            if self.sharehub:
+                bars = self.sharehub.get_price_history(symbol.upper(), limit=2)
+                if bars:
+                    latest = bars[0]
+                    bar_date = str(latest.get("date") or datetime.now().strftime('%Y-%m-%d'))[:10]
+                    ltp = float(latest.get("close") or 0)
+                    if ltp > 0:
+                        return {
+                            'date': bar_date,
+                            'ltp': ltp,
+                            'volume': int(float(latest.get("volume") or 0)),
+                            'open': float(latest.get("open") or ltp),
+                            'high': float(latest.get("high") or ltp),
+                            'low': float(latest.get("low") or ltp),
+                        }
+        except Exception as e:
+            logger.debug(f"ShareHub latest bar fallback failed: {e}")
+        return None
+    
+    def _append_today_data(self, df: pd.DataFrame, today_data: Dict) -> pd.DataFrame:
+        """Append today's real-time data to historical dataframe."""
+        try:
+            # Check if today's date already exists
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+                if today_data['date'] in df['date'].values:
+                    # Update existing row with today's data
+                    df.loc[df['date'] == today_data['date'], 'close'] = today_data['ltp']
+                    df.loc[df['date'] == today_data['date'], 'volume'] = today_data['volume']
+                    df.loc[df['date'] == today_data['date'], 'high'] = today_data['high']
+                    df.loc[df['date'] == today_data['date'], 'low'] = today_data['low']
+                    logger.info(f"📊 Updated today's data: Volume={today_data['volume']}")
+                    return df
+            
+            # Append as new row
+            today_row = pd.DataFrame([{
+                'date': today_data['date'],
+                'open': today_data['open'],
+                'high': today_data['high'],
+                'low': today_data['low'],
+                'close': today_data['ltp'],
+                'volume': today_data['volume'],
+            }])
+            
+            df = pd.concat([df, today_row], ignore_index=True)
+            logger.info(f"📊 Appended today's data: LTP={today_data['ltp']}, Volume={today_data['volume']}")
+            
+        except Exception as e:
+            logger.error(f"Failed to append today's data: {e}")
+        
+        return df
     
     def analyze(
         self,
@@ -359,31 +446,40 @@ class IPOExitAnalyzer:
             result.warnings.append("Need at least 3 days of trading data")
             return result
         
-        # 2. Basic metrics - use real-time LTP if available
+        # 2. Try to get TODAY's real-time data and append it
+        today_data = self._fetch_today_data(symbol)
+        if today_data:
+            df = self._append_today_data(df, today_data)
+        
+        # 3. Basic metrics - use real-time LTP if available
         result.days_since_listing = len(df)
         result.listing_price = float(df.iloc[0]["close"])  # Day 1 close
         
         # Try to get real-time LTP instead of yesterday's close
-        realtime_ltp = self._fetch_realtime_ltp(symbol)
-        if realtime_ltp and realtime_ltp > 0:
-            result.current_price = realtime_ltp
-            logger.info(f"📊 Using real-time LTP: Rs. {realtime_ltp}")
+        if today_data and today_data.get('ltp'):
+            result.current_price = float(today_data['ltp'])
+            logger.info(f"📊 Using real-time LTP: Rs. {result.current_price}")
         else:
-            result.current_price = float(df.iloc[-1]["close"])
+            realtime_ltp = self._fetch_realtime_ltp(symbol)
+            if realtime_ltp and realtime_ltp > 0:
+                result.current_price = realtime_ltp
+                logger.info(f"📊 Using real-time LTP: Rs. {realtime_ltp}")
+            else:
+                result.current_price = float(df.iloc[-1]["close"])
         
         result.gain_from_listing_pct = (result.current_price / result.listing_price - 1) * 100
         
-        # 3. Analyze volume patterns
+        # 4. Analyze volume patterns (now includes today)
         result.volume_analysis = self._analyze_volume(df)
         
-        # 4. Analyze price patterns
+        # 5. Analyze price patterns
         result.price_pattern = self._analyze_price_pattern(df)
         
-        # 5. Analyze broker flow (if available)
+        # 6. Analyze broker flow (if available)
         if broker_data or self.sharehub:
             result.broker_flow = self._analyze_broker_flow(symbol, broker_data)
         
-        # 6. Generate final verdict
+        # 7. Generate final verdict
         self._generate_verdict(result)
         
         logger.info(f"📊 {symbol}: Exit Signal = {result.exit_signal.value}, Verdict = {result.verdict}")
@@ -526,15 +622,22 @@ class IPOExitAnalyzer:
         # Fetch broker data if not provided
         if broker_data is None and self.sharehub:
             try:
-                response = self.sharehub.get_broker_analysis(symbol, duration="1W")
-                # Handle both list and object response types
-                if response:
-                    if hasattr(response, 'brokers') and response.brokers:
-                        broker_data = response.brokers
-                        analysis.analysis_period = getattr(response, 'date_range', 'Recent')
-                    elif isinstance(response, list):
-                        broker_data = response
-                        analysis.analysis_period = "1 Week"
+                # Prefer freshest broker window first, then broader weekly fallback.
+                response_1d = self.sharehub.get_broker_analysis_full(symbol, duration="1D")
+                if response_1d and getattr(response_1d, "brokers", None):
+                    broker_data = response_1d.brokers
+                    analysis.analysis_period = getattr(response_1d, "date_range", "1 Day")
+                else:
+                    response_1w = self.sharehub.get_broker_analysis_full(symbol, duration="1W")
+                    if response_1w and getattr(response_1w, "brokers", None):
+                        broker_data = response_1w.brokers
+                        analysis.analysis_period = getattr(response_1w, "date_range", "1 Week")
+                    else:
+                        # Final fallback for environments where only the basic endpoint is available.
+                        response_basic = self.sharehub.get_broker_analysis(symbol, duration="1W")
+                        if response_basic:
+                            broker_data = response_basic
+                            analysis.analysis_period = "1 Week"
             except Exception as e:
                 logger.debug(f"Could not fetch broker data: {e}")
                 return analysis

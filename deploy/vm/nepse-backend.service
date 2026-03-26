@@ -1,0 +1,14 @@
+[Unit]
+Description=NEPSE Backend FastAPI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nepse/nepse_ai_trading
+EnvironmentFile=/etc/nepse-backend.env
+ExecStart=/opt/nepse/nepse_ai_trading/.venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

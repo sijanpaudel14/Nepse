@@ -3,9 +3,9 @@ Core module for NEPSE AI Trading Bot.
 Contains configuration, database, and common utilities.
 """
 
-from core.config import settings
-from core.database import get_db, init_db
-from core.exceptions import (
+from .config import settings
+from .database import get_db, init_db
+from .exceptions import (
     NepseAPIError,
     DataValidationError,
     StrategyError,

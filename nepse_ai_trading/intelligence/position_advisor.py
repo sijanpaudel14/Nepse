@@ -394,7 +394,7 @@ class PositionAdvisor:
             else:
                 # Fallback to last close from historical data
                 result.current_price = float(df['close'].iloc[-1])
-                result.warnings.append("Using yesterday's close (market may be closed)")
+                result.warnings.append("Using latest open market data (market may be closed)")
         
         # Calculate P/L
         result.pnl_amount = result.current_price - result.buy_price

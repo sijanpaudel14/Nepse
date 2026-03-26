@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { runScan, addToPortfolio, type StockScanResult } from '@/lib/api';
 import { 
@@ -22,6 +22,14 @@ import {
   AlertOctagon,
 } from 'lucide-react';
 import { cn, formatCurrency, formatPercent, getScoreColor, getRiskColor } from '@/lib/utils';
+import { PrettySelect, ScanHistoryPanel } from '@/components/ui';
+import {
+  loadScanHistory,
+  pushScanHistory,
+  removeScanHistoryItem,
+  clearScanHistory,
+  type ScanHistoryItem,
+} from '@/lib/scan-history';
 import Link from 'next/link';
 
 // Strategy Selector
@@ -83,22 +91,7 @@ function SectorDropdown({
     { value: 'manufacturing', label: 'Manufacturing' },
   ];
 
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="appearance-none rounded-lg border border-border bg-card px-4 py-2 pr-10 text-sm font-medium text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-      >
-        {sectors.map((sector) => (
-          <option key={sector.value} value={sector.value}>
-            {sector.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
-  );
+  return <PrettySelect value={value} onChange={onChange} options={sectors} />;
 }
 
 // Score Icon based on level
@@ -313,6 +306,29 @@ export default function ScannerPage() {
   const [maxPrice, setMaxPrice] = useState<number | ''>('');
   const [buyingSymbol, setBuyingSymbol] = useState<string | null>(null);
   const [isScanRunning, setIsScanRunning] = useState(false);
+  const [isHydratingScan, setIsHydratingScan] = useState(true);
+  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
+
+  // Restore last scanner session
+  useEffect(() => {
+    setHistory(loadScanHistory('nepse-scan-history-v1'));
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('nepse-scan-ui-v1');
+      if (raw) {
+        const state = JSON.parse(raw);
+        if (state?.strategy === 'momentum' || state?.strategy === 'value') setStrategy(state.strategy);
+        if (typeof state?.sector === 'string') setSector(state.sector);
+        if (typeof state?.maxPrice === 'number' || state?.maxPrice === '') setMaxPrice(state.maxPrice);
+      }
+    } catch {
+      // ignore corrupted local storage
+    } finally {
+      setIsHydratingScan(false);
+    }
+  }, []);
 
   // Scan query
   const { data, isLoading, isFetching, refetch } = useQuery({
@@ -321,6 +337,9 @@ export default function ScannerPage() {
       const controller = new AbortController();
       scanAbortRef.current = controller;
       setIsScanRunning(true);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('nepse-scan-running-v1', '1');
+      }
       try {
         return await runScan({
           strategy,
@@ -332,6 +351,9 @@ export default function ScannerPage() {
       } finally {
         setIsScanRunning(false);
         scanAbortRef.current = null;
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem('nepse-scan-running-v1');
+        }
       }
     },
     enabled: false, // Manual trigger only
@@ -372,6 +394,18 @@ export default function ScannerPage() {
   };
 
   const handleScan = () => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        'nepse-scan-ui-v1',
+        JSON.stringify({ strategy, sector, maxPrice })
+      );
+    }
+    setHistory(
+      pushScanHistory('nepse-scan-history-v1', {
+        label: `${strategy.toUpperCase()} | ${sector || 'All sectors'} | Max ${maxPrice || 'Any'}`,
+        value: JSON.stringify({ strategy, sector, maxPrice }),
+      })
+    );
     refetch();
   };
 
@@ -380,6 +414,9 @@ export default function ScannerPage() {
       scanAbortRef.current.abort();
       scanAbortRef.current = null;
       setIsScanRunning(false);
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem('nepse-scan-running-v1');
+      }
       setBuyFeedback({
         symbol: '',
         success: false,
@@ -388,6 +425,18 @@ export default function ScannerPage() {
       setTimeout(() => setBuyFeedback(null), 3000);
     }
   };
+
+  useEffect(() => {
+    if (isHydratingScan) return;
+    try {
+      const wasRunning = window.localStorage.getItem('nepse-scan-running-v1') === '1';
+      if (wasRunning && !isLoading && !isFetching) {
+        refetch();
+      }
+    } catch {
+      // ignore storage access issue
+    }
+  }, [isHydratingScan, isLoading, isFetching, refetch]);
 
   return (
     <div className="space-y-6">
@@ -480,6 +529,28 @@ export default function ScannerPage() {
           Stop
         </button>
       </div>
+      <div className="max-w-xl">
+        <ScanHistoryPanel
+          title="Scanner History"
+          items={history}
+          onSelect={(value) => {
+            try {
+              const parsed = JSON.parse(value) as { strategy: 'momentum' | 'value'; sector: string; maxPrice: number | '' };
+              if (parsed.strategy === 'momentum' || parsed.strategy === 'value') setStrategy(parsed.strategy);
+              if (typeof parsed.sector === 'string') setSector(parsed.sector);
+              if (typeof parsed.maxPrice === 'number' || parsed.maxPrice === '') setMaxPrice(parsed.maxPrice);
+              setTimeout(() => refetch(), 0);
+            } catch {
+              // ignore invalid history entry
+            }
+          }}
+          onDelete={(id) => setHistory(removeScanHistoryItem('nepse-scan-history-v1', id))}
+          onClear={() => {
+            clearScanHistory('nepse-scan-history-v1');
+            setHistory([]);
+          }}
+        />
+      </div>
 
       {/* Market Regime Banner */}
       {data && (
@@ -527,14 +598,14 @@ export default function ScannerPage() {
           <Search className="h-12 w-12 text-muted-foreground" />
           <h3 className="mt-4 text-xl font-semibold">Ready to Scan</h3>
           <p className="mt-2 text-center text-muted-foreground">
-            Configure your filters above and click "Run AI Scan" to find<br />
+            Configure your filters above and click &quot;Run AI Scan&quot; to find<br />
             the best trading opportunities in the market.
           </p>
         </div>
       ) : null}
 
       {/* Loading State */}
-      {isLoading && (
+      {(isLoading || (isHydratingScan && isFetching)) && (
         <div className="flex flex-col items-center justify-center py-16">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
           <p className="mt-4 text-lg font-medium">Running 4-Pillar Analysis...</p>

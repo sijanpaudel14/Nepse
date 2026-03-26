@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getSmartMoney, type SmartMoneyResponse } from '@/lib/api';
 import { 
@@ -21,8 +21,16 @@ import {
   EmptyState,
   InfoBox,
   VerdictBadge,
+  ScanHistoryPanel,
 } from '@/components/ui';
 import Link from 'next/link';
+import {
+  loadScanHistory,
+  pushScanHistory,
+  removeScanHistoryItem,
+  clearScanHistory,
+  type ScanHistoryItem,
+} from '@/lib/scan-history';
 
 // Flow indicator component
 function FlowIndicator({ type, size = 'md' }: { type: 'ACCUMULATION' | 'DISTRIBUTION' | 'NEUTRAL', size?: 'sm' | 'md' | 'lg' }) {
@@ -113,7 +121,29 @@ function BrokerCard({ broker, rank }: { broker: SmartMoneyResponse['data']['top_
 }
 
 export default function SmartMoneyPage() {
+  const STORAGE_KEY = 'nepse-smart-money-ui-v1';
+  const HISTORY_KEY = 'nepse-smart-money-history-v1';
   const [sector, setSector] = useState('');
+  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.sector === 'string') setSector(parsed.sector);
+    } catch {
+      // ignore invalid storage
+    }
+  }, []);
+
+  useEffect(() => {
+    setHistory(loadScanHistory(HISTORY_KEY));
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sector }));
+  }, [sector]);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['smart-money', sector],
@@ -149,7 +179,15 @@ export default function SmartMoneyPage() {
         </div>
         
         <button
-          onClick={() => refetch()}
+          onClick={() => {
+            setHistory(
+              pushScanHistory(HISTORY_KEY, {
+                label: `Smart Money | ${sector || 'All sectors'}`,
+                value: sector,
+              })
+            );
+            refetch();
+          }}
           disabled={isLoading}
           className="btn-secondary"
         >
@@ -166,7 +204,15 @@ export default function SmartMoneyPage() {
         {sectors.map((s) => (
           <button
             key={s.value}
-            onClick={() => setSector(s.value)}
+            onClick={() => {
+              setSector(s.value);
+              setHistory(
+                pushScanHistory(HISTORY_KEY, {
+                  label: `Smart Money | ${s.label}`,
+                  value: s.value,
+                })
+              );
+            }}
             className={cn(
               'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
               sector === s.value 
@@ -177,6 +223,21 @@ export default function SmartMoneyPage() {
             {s.label}
           </button>
         ))}
+      </div>
+      <div className="max-w-xl">
+        <ScanHistoryPanel
+          title="Smart Money History"
+          items={history}
+          onSelect={(value) => {
+            setSector(value);
+            setTimeout(() => refetch(), 0);
+          }}
+          onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
+          onClear={() => {
+            clearScanHistory(HISTORY_KEY);
+            setHistory([]);
+          }}
+        />
       </div>
 
       {/* Loading State */}
@@ -220,7 +281,7 @@ export default function SmartMoneyPage() {
           {/* Top Brokers */}
           <div className="grid md:grid-cols-2 gap-6">
             <div className="rounded-xl border border-bull/20 bg-card p-5">
-              <SectionHeader title="🟢 Top Buyers (Aggressive Accumulation)" />
+              <SectionHeader title="Top Buyers (Aggressive Accumulation)" />
               <div className="space-y-2">
                 {result.top_buyers.map((broker, i) => (
                   <BrokerCard key={i} broker={broker} rank={i + 1} />
@@ -229,7 +290,7 @@ export default function SmartMoneyPage() {
             </div>
             
             <div className="rounded-xl border border-bear/20 bg-card p-5">
-              <SectionHeader title="🔴 Top Sellers (Distribution)" />
+              <SectionHeader title="Top Sellers (Distribution)" />
               <div className="space-y-2">
                 {result.top_sellers.map((broker, i) => (
                   <BrokerCard key={i} broker={broker} rank={i + 1} />
@@ -240,7 +301,7 @@ export default function SmartMoneyPage() {
 
           {/* Stocks Under Accumulation */}
           <div className="rounded-xl border border-border bg-card p-5">
-            <SectionHeader title="📈 Stocks Under Smart Money Accumulation" />
+            <SectionHeader title="Stocks Under Smart Money Accumulation" />
             <div className="space-y-2">
               {result.stocks
                 .filter(s => s.flow_type === 'ACCUMULATION')
@@ -258,7 +319,7 @@ export default function SmartMoneyPage() {
 
           {/* Stocks Under Distribution */}
           <div className="rounded-xl border border-border bg-card p-5">
-            <SectionHeader title="📉 Stocks Under Distribution (Caution)" />
+            <SectionHeader title="Stocks Under Distribution (Caution)" />
             <div className="space-y-2">
               {result.stocks
                 .filter(s => s.flow_type === 'DISTRIBUTION')
@@ -279,7 +340,7 @@ export default function SmartMoneyPage() {
       {/* Info Box */}
       <InfoBox title="What is Smart Money?" variant="info">
         <p>
-          "Smart money" refers to institutional investors and large brokers who often have better 
+          &quot;Smart money&quot; refers to institutional investors and large brokers who often have better 
           information and analysis. By tracking their buying (accumulation) and selling (distribution) 
           patterns, retail traders can identify potential opportunities before the crowd.
         </p>

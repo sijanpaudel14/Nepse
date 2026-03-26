@@ -10,6 +10,6 @@ Start the server with:
     uvicorn api.main:app --reload
 """
 
-from api.main import app
+from .main import app
 
 __all__ = ["app"]

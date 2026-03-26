@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getTradingCalendar, type CalendarResponse } from '@/lib/api';
 import { 
@@ -21,7 +21,16 @@ import {
   EmptyState,
   InfoBox,
   ScoreCircle,
+  PrettySelect,
+  ScanHistoryPanel,
 } from '@/components/ui';
+import {
+  loadScanHistory,
+  pushScanHistory,
+  removeScanHistoryItem,
+  clearScanHistory,
+  type ScanHistoryItem,
+} from '@/lib/scan-history';
 import Link from 'next/link';
 
 // Stock card in calendar
@@ -107,8 +116,41 @@ function CalendarDay({ day }: { day: CalendarResponse['data']['calendar'][0] }) 
 }
 
 export default function CalendarPage() {
+  const STORAGE_KEY = 'nepse-calendar-ui-v1';
+  const HISTORY_KEY = 'nepse-calendar-history-v1';
   const [days, setDays] = useState(14);
   const [sector, setSector] = useState('');
+  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.days === 'number' && [7, 14, 30].includes(parsed.days)) setDays(parsed.days);
+      if (typeof parsed.sector === 'string') setSector(parsed.sector);
+    } catch {
+      // ignore invalid storage
+    }
+  }, []);
+
+  useEffect(() => {
+    setHistory(loadScanHistory(HISTORY_KEY));
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ days, sector }));
+  }, [days, sector]);
+
+  useEffect(() => {
+    setHistory(
+      pushScanHistory(HISTORY_KEY, {
+        label: `Calendar | ${days}d | ${sector || 'All sectors'}`,
+        value: JSON.stringify({ days, sector }),
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['trading-calendar', days, sector],
@@ -182,16 +224,34 @@ export default function CalendarPage() {
         {/* Sector Filter */}
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-muted-foreground" />
-          <select
+          <PrettySelect
             value={sector}
-            onChange={(e) => setSector(e.target.value)}
-            className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground focus:border-primary focus:outline-none"
-          >
-            {sectors.map((s) => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
+            onChange={setSector}
+            options={sectors}
+            className="min-w-[240px]"
+          />
         </div>
+      </div>
+      <div className="max-w-xl">
+        <ScanHistoryPanel
+          title="Calendar Scan History"
+          items={history}
+          onSelect={(value) => {
+            try {
+              const parsed = JSON.parse(value) as { days: number; sector: string };
+              if (typeof parsed.days === 'number' && [7, 14, 30].includes(parsed.days)) setDays(parsed.days);
+              if (typeof parsed.sector === 'string') setSector(parsed.sector);
+              setTimeout(() => refetch(), 0);
+            } catch {
+              // ignore invalid history entry
+            }
+          }}
+          onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
+          onClear={() => {
+            clearScanHistory(HISTORY_KEY);
+            setHistory([]);
+          }}
+        />
       </div>
 
       {/* Calendar Stats */}
@@ -241,7 +301,7 @@ export default function CalendarPage() {
 
       {/* Legend */}
       <div className="rounded-xl border border-border bg-card p-4">
-        <SectionHeader title="📖 How to Read the Calendar" />
+        <SectionHeader title="How to Read the Calendar" />
         <div className="grid md:grid-cols-3 gap-4 text-sm">
           <div className="flex items-start gap-2">
             <ScoreCircle score={80} size="sm" />
@@ -271,7 +331,7 @@ export default function CalendarPage() {
         </div>
         
         <p className="mt-4 text-xs text-muted-foreground">
-          💡 Click any stock card to see the full trading signal with detailed entry/exit timing.
+          Click any stock card to see the full trading signal with detailed entry and exit timing.
         </p>
       </div>
 

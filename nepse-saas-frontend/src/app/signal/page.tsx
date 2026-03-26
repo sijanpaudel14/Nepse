@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getSignal, type SignalResponse } from '@/lib/api';
 import { 
@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Calendar,
+  CheckCircle,
   Percent,
   Activity,
 } from 'lucide-react';
@@ -28,13 +29,48 @@ import {
   SymbolInput,
   EmptyState,
   InfoBox,
+  ScanHistoryPanel,
 } from '@/components/ui';
+import {
+  loadScanHistory,
+  pushScanHistory,
+  removeScanHistoryItem,
+  clearScanHistory,
+  type ScanHistoryItem,
+} from '@/lib/scan-history';
 
 export default function SignalPage() {
+  const STORAGE_KEY = 'nepse-signal-state-v1';
+  const HISTORY_KEY = 'nepse-signal-history-v1';
   const [symbol, setSymbol] = useState('');
   const [searchSymbol, setSearchSymbol] = useState('');
+  const [hydrated, setHydrated] = useState(false);
+  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
-  const { data, isLoading, isError, error } = useQuery({
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.symbol === 'string') setSymbol(parsed.symbol);
+      if (typeof parsed.searchSymbol === 'string') setSearchSymbol(parsed.searchSymbol);
+    } catch {
+      // ignore invalid storage
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    setHistory(loadScanHistory(HISTORY_KEY));
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
+  }, [symbol, searchSymbol, hydrated]);
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['signal', searchSymbol],
     queryFn: () => getSignal({ symbol: searchSymbol }),
     enabled: !!searchSymbol,
@@ -42,12 +78,38 @@ export default function SignalPage() {
   });
 
   const handleSubmit = () => {
-    if (symbol.trim()) {
-      setSearchSymbol(symbol.trim().toUpperCase());
+    const clean = symbol.trim().toUpperCase();
+    if (!clean) return;
+    setHistory(
+      pushScanHistory(HISTORY_KEY, {
+        label: clean,
+        value: clean,
+      })
+    );
+    if (clean === searchSymbol) {
+      refetch();
+    } else {
+      setSearchSymbol(clean);
     }
   };
 
   const signal = data?.data;
+
+  const normalizeCondition = (raw: string) => {
+    const text = (raw || '').replace(/[_-]+/g, ' ').trim();
+    const mappings: Array<[RegExp, string]> = [
+      [/golden\s*cross.*ema9.*ema21/i, 'Golden cross confirmed (EMA 9 above EMA 21)'],
+      [/pullback\s*to\s*support.*ema20/i, 'Healthy pullback toward EMA20 support'],
+      [/price\s*near\s*support/i, 'Price trading near support zone'],
+      [/price\s*at\s*resistance/i, 'Price near resistance zone (wait for breakout confirmation)'],
+      [/uptrend.*markup/i, 'Uptrend phase remains intact'],
+      [/rsi.*healthy/i, 'RSI is in a healthy momentum range'],
+    ];
+    for (const [pattern, replacement] of mappings) {
+      if (pattern.test(text)) return replacement;
+    }
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  };
 
   return (
     <div className="space-y-6">
@@ -70,6 +132,25 @@ export default function SignalPage() {
           onSubmit={handleSubmit}
           placeholder="Enter stock symbol (e.g., NABIL)"
           isLoading={isLoading}
+        />
+      </div>
+      <div className="max-w-md">
+        <ScanHistoryPanel
+          title="Signal History"
+          items={history}
+          onSelect={(value) => {
+            setSymbol(value);
+            if (value === searchSymbol) {
+              refetch();
+            } else {
+              setSearchSymbol(value);
+            }
+          }}
+          onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
+          onClear={() => {
+            clearScanHistory(HISTORY_KEY);
+            setHistory([]);
+          }}
         />
       </div>
 
@@ -110,8 +191,9 @@ export default function SignalPage() {
 
             {/* Confidence & Trend */}
             <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="rounded-lg bg-muted/20 p-4 text-center">
-                <ScoreCircle score={signal.confidence} label="Confidence" size="sm" />
+              <div className="rounded-lg bg-muted/20 p-4 flex flex-col items-center justify-center">
+                <ScoreCircle score={signal.confidence} size="md" />
+                <p className="mt-2 text-xs font-medium text-muted-foreground">Confidence</p>
               </div>
               <div className="rounded-lg bg-muted/20 p-4">
                 <p className="text-sm text-muted-foreground">Trend Phase</p>
@@ -133,8 +215,8 @@ export default function SignalPage() {
             {/* Phase 1: Entry */}
             <div className="rounded-xl border border-primary/30 bg-primary/5 p-5">
               <div className="flex items-center gap-2 text-primary font-semibold mb-4">
-                <div className="rounded-full bg-primary/20 p-1">
-                  <span className="text-sm">1</span>
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/20 text-sm font-semibold leading-none">
+                  1
                 </div>
                 <span>ENTRY (When to Buy)</span>
               </div>
@@ -157,8 +239,8 @@ export default function SignalPage() {
                   <ul className="mt-1 space-y-1">
                     {signal.entry.conditions.map((condition, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
-                        <span className="text-primary">✓</span>
-                        {condition}
+                        <CheckCircle className="h-4 w-4 text-primary" />
+                        {normalizeCondition(condition)}
                       </li>
                     ))}
                   </ul>
@@ -169,8 +251,8 @@ export default function SignalPage() {
             {/* Phase 2: Hold */}
             <div className="rounded-xl border border-warning/30 bg-warning/5 p-5">
               <div className="flex items-center gap-2 text-warning font-semibold mb-4">
-                <div className="rounded-full bg-warning/20 p-1">
-                  <span className="text-sm">2</span>
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-warning/20 text-sm font-semibold leading-none">
+                  2
                 </div>
                 <span>HOLD (How Long)</span>
               </div>
@@ -204,8 +286,8 @@ export default function SignalPage() {
             {/* Phase 3: Exit */}
             <div className="rounded-xl border border-bull/30 bg-bull/5 p-5">
               <div className="flex items-center gap-2 text-bull font-semibold mb-4">
-                <div className="rounded-full bg-bull/20 p-1">
-                  <span className="text-sm">3</span>
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-bull/20 text-sm font-semibold leading-none">
+                  3
                 </div>
                 <span>EXIT (When to Sell)</span>
               </div>
@@ -227,7 +309,7 @@ export default function SignalPage() {
 
           {/* Risk Management */}
           <div className="rounded-xl border border-border bg-card p-5">
-            <SectionHeader title="⚖️ Risk Management" />
+            <SectionHeader title="Risk Management" />
             
             <div className="grid md:grid-cols-4 gap-4">
               <div className="rounded-lg bg-muted/20 p-4">
@@ -252,7 +334,7 @@ export default function SignalPage() {
 
           {/* Recommendation */}
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-5">
-            <SectionHeader title="💡 Recommendation" />
+            <SectionHeader title="Recommendation" />
             <p className="text-lg">{signal.recommendation}</p>
           </div>
 

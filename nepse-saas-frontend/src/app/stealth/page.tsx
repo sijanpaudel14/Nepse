@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { runStealthScan, type SectorRotation, type StealthStock } from '@/lib/api';
 import { 
@@ -19,6 +19,14 @@ import {
   Shield,
 } from 'lucide-react';
 import { cn, formatCurrency, formatPercent } from '@/lib/utils';
+import { PrettySelect, ScanHistoryPanel } from '@/components/ui';
+import {
+  loadScanHistory,
+  pushScanHistory,
+  removeScanHistoryItem,
+  clearScanHistory,
+  type ScanHistoryItem,
+} from '@/lib/scan-history';
 import Link from 'next/link';
 
 // Heat indicator for sectors
@@ -215,9 +223,12 @@ function StealthStockRow({ stock }: { stock: StealthStock }) {
 }
 
 export default function StealthPage() {
+  const STORAGE_KEY = 'nepse-stealth-ui-v1';
+  const HISTORY_KEY = 'nepse-stealth-history-v1';
   const [sector, setSector] = useState('');
   const stealthAbortRef = useRef<AbortController | null>(null);
   const [isStealthRunning, setIsStealthRunning] = useState(false);
+  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['stealth-scan', sector],
@@ -235,7 +246,32 @@ export default function StealthPage() {
     enabled: false,
   });
 
+  useEffect(() => {
+    setHistory(loadScanHistory(HISTORY_KEY));
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.sector === 'string') setSector(parsed.sector);
+    } catch {
+      // ignore invalid storage
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sector }));
+  }, [sector]);
+
   const handleScan = () => {
+    setHistory(
+      pushScanHistory(HISTORY_KEY, {
+        label: `Stealth | ${sector || 'All sectors'}`,
+        value: JSON.stringify({ sector }),
+      })
+    );
     refetch();
   };
 
@@ -273,7 +309,7 @@ export default function StealthPage() {
         <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
           <li className="flex items-center gap-2">
             <ArrowDown className="h-4 w-4 text-bear" />
-            <span><strong className="text-foreground">Technical Score is LOW</strong> — Price hasn't broken out yet</span>
+            <span><strong className="text-foreground">Technical Score is LOW</strong> — Price hasn&apos;t broken out yet</span>
           </li>
           <li className="flex items-center gap-2">
             <ArrowUp className="h-4 w-4 text-bull" />
@@ -285,25 +321,25 @@ export default function StealthPage() {
           </li>
         </ul>
         <p className="mt-2 text-sm text-primary font-medium">
-          This radar shows you which sectors the "Smart Money" is quietly rotating into!
+          This radar shows you which sectors the &quot;Smart Money&quot; is quietly rotating into!
         </p>
       </div>
 
       {/* Controls */}
       <div className="flex items-center gap-4">
-        <select
+        <PrettySelect
           value={sector}
-          onChange={(e) => setSector(e.target.value)}
-          className="rounded-lg border border-border bg-card px-4 py-2 text-sm focus:border-primary focus:outline-none"
-        >
-          <option value="">All Sectors</option>
-          <option value="hydro">Hydropower</option>
-          <option value="bank">Banking</option>
-          <option value="finance">Finance</option>
-          <option value="microfinance">Microfinance</option>
-          <option value="life_insurance">Life Insurance</option>
-          <option value="non_life_insurance">Non-Life Insurance</option>
-        </select>
+          onChange={setSector}
+          options={[
+            { value: '', label: 'All Sectors' },
+            { value: 'hydro', label: 'Hydropower' },
+            { value: 'bank', label: 'Banking' },
+            { value: 'finance', label: 'Finance' },
+            { value: 'microfinance', label: 'Microfinance' },
+            { value: 'life_insurance', label: 'Life Insurance' },
+            { value: 'non_life_insurance', label: 'Non-Life Insurance' },
+          ]}
+        />
 
         <button
           onClick={handleScan}
@@ -339,6 +375,26 @@ export default function StealthPage() {
           Stop
         </button>
       </div>
+      <div className="max-w-xl">
+        <ScanHistoryPanel
+          title="Stealth Scan History"
+          items={history}
+          onSelect={(value) => {
+            try {
+              const parsed = JSON.parse(value) as { sector: string };
+              if (typeof parsed.sector === 'string') setSector(parsed.sector);
+              setTimeout(() => refetch(), 0);
+            } catch {
+              // ignore invalid history entry
+            }
+          }}
+          onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
+          onClear={() => {
+            clearScanHistory(HISTORY_KEY);
+            setHistory([]);
+          }}
+        />
+      </div>
 
       {/* Results */}
       {(isLoading || isStealthRunning) && (
@@ -365,7 +421,7 @@ export default function StealthPage() {
               <p className="text-2xl font-bold text-bear">
                 {data.sectors.filter(s => s.stock_count >= 5).length}
               </p>
-              <p className="text-sm text-muted-foreground">🔥🔥🔥 HOT Sectors</p>
+              <p className="text-sm text-muted-foreground">HOT Sectors</p>
             </div>
           </div>
 
@@ -398,7 +454,7 @@ export default function StealthPage() {
           <Radar className="h-12 w-12 text-muted-foreground" />
           <h3 className="mt-4 text-xl font-semibold">Ready to Detect Smart Money</h3>
           <p className="mt-2 text-center text-muted-foreground">
-            Click "Run Stealth Scan" to identify sectors where<br />
+            Click &quot;Run Stealth Scan&quot; to identify sectors where<br />
             institutional money is quietly accumulating shares.
           </p>
         </div>
