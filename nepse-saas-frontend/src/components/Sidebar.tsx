@@ -31,6 +31,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Sparkles,
+  Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -39,6 +40,7 @@ interface NavItem {
   href: string;
   icon: any;
   badge?: string;
+  comingSoon?: boolean;
 }
 
 interface NavGroup {
@@ -83,9 +85,9 @@ const navigationGroups: NavGroup[] = [
     name: 'Market Scanner',
     icon: Radar,
     items: [
-      { name: 'AI Scanner', href: '/scanner', icon: Brain },
-      { name: 'Stealth Radar', href: '/stealth', icon: Radar },
-      { name: 'Trading Calendar', href: '/calendar', icon: Calendar },
+      { name: 'AI Scanner', href: '/scanner', icon: Brain, comingSoon: true },
+      { name: 'Stealth Radar', href: '/stealth', icon: Radar, comingSoon: true },
+      { name: 'Trading Calendar', href: '/calendar', icon: Calendar, comingSoon: true },
     ],
   },
   {
@@ -164,6 +166,23 @@ function NavGroupComponent({ group, collapsed }: { group: NavGroup; collapsed: b
                 <div className="mt-1 ml-3 space-y-0.5 border-l border-border/50 pl-3">
                   {group.items.map((item, index) => {
                     const isActive = pathname === item.href;
+                    if (item.comingSoon) {
+                      return (
+                        <motion.div
+                          key={item.href}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          title="Available on localhost only — coming soon on web"
+                        >
+                          <div className="group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm cursor-not-allowed opacity-40 select-none">
+                            <item.icon className="h-4 w-4" />
+                            <span className="flex-1">{item.name}</span>
+                            <Lock className="h-3 w-3 text-muted-foreground" />
+                          </div>
+                        </motion.div>
+                      );
+                    }
                     return (
                       <motion.div
                         key={item.href}
@@ -215,6 +234,17 @@ function NavGroupComponent({ group, collapsed }: { group: NavGroup; collapsed: b
         <div className="space-y-1">
           {group.items.map((item) => {
             const isActive = pathname === item.href;
+            if (item.comingSoon) {
+              return (
+                <div
+                  key={item.href}
+                  title={`${item.name} — coming soon on web`}
+                  className="flex w-full items-center justify-center rounded-lg px-2 py-2.5 opacity-30 cursor-not-allowed"
+                >
+                  <item.icon className="h-4 w-4" />
+                </div>
+              );
+            }
             return (
               <Link
                 key={item.href}
