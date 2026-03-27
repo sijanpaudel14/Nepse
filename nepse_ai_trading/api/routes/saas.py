@@ -913,9 +913,9 @@ async def _fetch_market_regime_with_timeout():
         screener = MasterStockScreener(strategy="momentum")
         regime, reason = screener.check_market_regime()
         
-        # Reuse fetcher - data is already fetched by screener
+        # Fetch index data for display (screener already cached internally)
         fetcher = NepseFetcher()
-        index_df = fetcher.fetch_index_history(days=30)  # Reduced from 60 to save time
+        index_df = fetcher.fetch_index_history(days=60)  # Need 60 for accurate EMA50
         
         nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
         ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
