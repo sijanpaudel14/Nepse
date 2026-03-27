@@ -1,0 +1,1 @@
+This is a placeholder. Modern browsers will use favicon.svg

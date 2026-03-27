@@ -12,7 +12,10 @@ export const metadata: Metadata = {
   title: 'NEPSE AI Trading Terminal',
   description: 'AI-Powered Swing Trading Assistant for Nepal Stock Exchange',
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', sizes: 'any' },
+    ],
   },
 };
 
