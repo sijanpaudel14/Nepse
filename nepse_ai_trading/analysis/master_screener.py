@@ -402,6 +402,35 @@ class MasterStockScreener:
         "mutual_fund": "Mutual Fund"
     }
     
+    # ===== THREAD-SAFE FETCHER PROPERTIES =====
+    # These properties make self.fetcher and self.sharehub resolve to
+    # per-thread instances when called from ThreadPoolExecutor workers.
+    # Main thread gets _base_fetcher/_base_sharehub (no thread-local set).
+    
+    @property
+    def fetcher(self):
+        """Returns per-thread NepseFetcher if in a worker thread, else the base instance."""
+        tl = getattr(_thread_local, 'fetcher', None)
+        if tl is not None:
+            return tl
+        return self._base_fetcher
+    
+    @fetcher.setter
+    def fetcher(self, value):
+        self._base_fetcher = value
+    
+    @property
+    def sharehub(self):
+        """Returns per-thread ShareHubAPI if in a worker thread, else the base instance."""
+        tl = getattr(_thread_local, 'sharehub', None)
+        if tl is not None:
+            return tl
+        return self._base_sharehub
+    
+    @sharehub.setter
+    def sharehub(self, value):
+        self._base_sharehub = value
+    
     def __init__(self, sharehub_token: str = None, strategy: str = "value", target_sector: str = None, max_price: float = None, analysis_date: "date" = None):
         """Initialize with optional ShareHub auth token, strategy, target sector, max price budget, and analysis_date for historical mode."""
         import os
@@ -462,38 +491,22 @@ class MasterStockScreener:
         if self._analysis_date:
             logger.info(f"📅 HISTORICAL MODE: Indicators will be calculated as of {self._analysis_date}")
     
-    def _get_thread_fetcher(self) -> NepseFetcher:
-        """Return a per-thread NepseFetcher so HTTP calls run in true parallel."""
-        if not hasattr(_thread_local, 'fetcher'):
-            _thread_local.fetcher = NepseFetcher()
-        return _thread_local.fetcher
-    
-    def _get_thread_sharehub(self) -> ShareHubAPI:
-        """Return a per-thread ShareHubAPI so HTTP calls run in true parallel."""
-        if not hasattr(_thread_local, 'sharehub'):
-            _thread_local.sharehub = ShareHubAPI(auth_token=self.sharehub_token)
-        return _thread_local.sharehub
-    
     def _score_stock_parallel(self, stock_data: Dict) -> Optional["ScreenedStock"]:
         """Thread-safe stock scoring with per-thread HTTP clients.
         
-        Temporarily swaps self.fetcher and self.sharehub to thread-local
-        instances so that 25 workers make HTTP calls truly in parallel
-        instead of serializing through a single httpx.Client.
+        Sets thread-local NepseFetcher and ShareHubAPI instances so that
+        all self.fetcher / self.sharehub reads inside _score_stock()
+        resolve to this thread's own HTTP client (via the @property).
         """
-        # Save originals
-        orig_fetcher = self.fetcher
-        orig_sharehub = self.sharehub
+        # Lazily create per-thread HTTP clients (created once, reused across stocks)
+        if not hasattr(_thread_local, 'fetcher') or _thread_local.fetcher is None:
+            _thread_local.fetcher = NepseFetcher()
+            _thread_local.sharehub = ShareHubAPI(auth_token=self.sharehub_token)
         try:
-            self.fetcher = self._get_thread_fetcher()
-            self.sharehub = self._get_thread_sharehub()
             return self._score_stock(stock_data)
         except Exception as e:
             logger.debug(f"Error analyzing {stock_data.get('symbol', '')}: {e}")
             return None
-        finally:
-            self.fetcher = orig_fetcher
-            self.sharehub = orig_sharehub
 
     def _fetch_historical_safe(self, symbol: str, days: int = 60, min_rows: int = 14) -> pd.DataFrame:
         """
