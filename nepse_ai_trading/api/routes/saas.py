@@ -2476,8 +2476,22 @@ async def get_market_heatmap():
             
             sector = company_map[symbol].get('sector', 'Unknown')
             ltp = _to_float(row.get('ltp', row.get('close', 0)))
-            change = _to_float(row.get('change', row.get('pointChange', 0)))
-            change_pct = _to_float(row.get('changePct', row.get('percentageChange', 0)))
+            change = _to_float(row.get('change', row.get('pointChange', None)))
+            change_pct = _to_float(row.get('changePct', row.get('percentageChange', None)))
+            
+            # If changePct not available OR zero (market closed), calculate from close vs open
+            if change_pct is None or change_pct == 0:
+                open_price = _to_float(row.get('open', 0))
+                close_price = _to_float(row.get('close', 0))
+                
+                if open_price and open_price > 0:
+                    change_pct = ((close_price - open_price) / open_price) * 100
+                    # Also calculate point change
+                    if change is None or change == 0:
+                        change = close_price - open_price
+                else:
+                    change_pct = 0
+                    change = 0
             
             if ltp <= 0:
                 continue
@@ -3166,14 +3180,33 @@ async def get_sector_rotation():
         for item in _normalize_company_list(company_list):
             company_map[item['symbol']] = item
         
+        # Calculate changes - use close vs open if changePct not available
         sector_data = {}
+        debug_count = 0
         for _, row in live_data.iterrows():
             symbol = str(row.get('symbol', '')).upper()
             if symbol not in company_map:
                 continue
             
             sector = company_map[symbol].get('sector', 'Unknown')
-            change_pct = _to_float(row.get('changePct', row.get('percentageChange', 0)))
+            
+            # Try API changePct first
+            change_pct = _to_float(row.get('changePct', row.get('percentageChange', None)))
+            
+            # If not available OR zero (market closed), calculate from close vs open (intraday change)
+            if change_pct is None or change_pct == 0:
+                open_price = _to_float(row.get('open', 0))
+                close_price = _to_float(row.get('close', 0))
+                
+                if open_price and open_price > 0:
+                    change_pct = ((close_price - open_price) / open_price) * 100
+                else:
+                    change_pct = 0
+            
+            # Debug first 3 stocks
+            if debug_count < 3:
+                logger.info(f"DEBUG {symbol}: change_pct={change_pct}, open={row.get('open')}, close={row.get('close')}")
+                debug_count += 1
             
             if sector not in sector_data:
                 sector_data[sector] = {'changes': [], 'count': 0}
@@ -3286,7 +3319,17 @@ async def get_positioning():
                 current_price = _extract_live_price(row)
                 if current_price <= 0:
                     continue
-                change_pct = _to_float(row.get("percentChange", row.get("changePercent", 0)))
+                
+                # Get change percentage - calculate if not provided
+                change_pct = _to_float(row.get("percentChange", row.get("changePercent", None)))
+                if change_pct is None or change_pct == 0:
+                    open_price = _to_float(row.get('open', 0))
+                    close_price = _to_float(row.get('close', 0))
+                    if open_price and open_price > 0:
+                        change_pct = ((close_price - open_price) / open_price) * 100
+                    else:
+                        change_pct = 0
+                
                 # Lightweight proxies for SMA positioning using current momentum
                 sma_20 = current_price * (0.99 if change_pct >= 0 else 1.01)
                 sma_50 = current_price * (0.97 if change_pct >= 0 else 1.03)
