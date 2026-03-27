@@ -290,7 +290,7 @@ export function Sidebar() {
                 NEPSE AI
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
               </h1>
-              <p className="text-[10px] text-muted-foreground font-medium">Trading Terminal v2.0</p>
+              <p className="text-[10px] text-muted-foreground font-medium">Next Millionaire</p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -421,7 +421,7 @@ export function Sidebar() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              v2.0.0 • Educational Use Only
+              Safe Usuage • Educational Use Only
             </motion.p>
           )}
         </AnimatePresence>
