@@ -168,7 +168,7 @@ export default function IPOExitPage() {
     enabled: !!searchSymbol,
     retry: 1,
     staleTime: 0, // Always fetch fresh data
-    cacheTime: 0, // Don't keep in cache
+    gcTime: 0, // Don't keep in cache (renamed from cacheTime in React Query v5)
   });
 
   const handleSubmit = () => {
