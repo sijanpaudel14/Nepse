@@ -2317,6 +2317,7 @@ async def get_position_advice(
 async def get_trading_calendar(
     days: int = Query(default=14, ge=7, le=30, description="Days to look ahead"),
     sector: Optional[str] = Query(None, description="Filter by sector"),
+    max_price: Optional[float] = Query(None, description="Maximum stock price filter (Rs.)"),
 ):
     """Get trading calendar with stock picks for each day."""
     try:
@@ -2343,6 +2344,9 @@ async def get_trading_calendar(
                         change_pct = ((close_p - open_p) / open_p) * 100
                 if not _is_valid_price(ltp):
                     continue
+                # Apply max_price filter if provided
+                if max_price is not None and ltp > max_price:
+                    continue
                 score = max(0, min(100, 50 + change_pct * 5))
                 candidates.append({
                     "symbol": symbol,
@@ -2355,7 +2359,9 @@ async def get_trading_calendar(
                     "reason": "Momentum-based quick calendar setup",
                 })
         candidates.sort(key=lambda x: x["score"], reverse=True)
-        candidates = candidates[:30]
+        # Take up to 5 candidates per day so every day can show up to 5 stocks.
+        # e.g. 14 days → 70 slots, 30 days → 150 slots
+        candidates = candidates[:days * 5]
         
         if not candidates:
             return CalendarResponse(

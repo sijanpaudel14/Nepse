@@ -14,6 +14,7 @@ import {
   Filter,
   Activity,
   RefreshCw,
+  DollarSign,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -121,6 +122,7 @@ export default function CalendarPage() {
   const HISTORY_KEY = 'nepse-calendar-history-v1';
   const [days, setDays] = useState(14);
   const [sector, setSector] = useState('');
+  const [maxPrice, setMaxPrice] = useState<number | ''>('');
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
   useEffect(() => {
@@ -130,6 +132,7 @@ export default function CalendarPage() {
       const parsed = JSON.parse(raw);
       if (typeof parsed.days === 'number' && [7, 14, 30].includes(parsed.days)) setDays(parsed.days);
       if (typeof parsed.sector === 'string') setSector(parsed.sector);
+      if (typeof parsed.maxPrice === 'number') setMaxPrice(parsed.maxPrice);
     } catch {
       // ignore invalid storage
     }
@@ -140,8 +143,8 @@ export default function CalendarPage() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ days, sector }));
-  }, [days, sector]);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ days, sector, maxPrice }));
+  }, [days, sector, maxPrice]);
 
   useEffect(() => {
     setHistory(
@@ -154,8 +157,8 @@ export default function CalendarPage() {
   }, []);
 
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['trading-calendar', days, sector],
-    queryFn: () => getTradingCalendar({ days, sector: sector || undefined }),
+    queryKey: ['trading-calendar', days, sector, maxPrice],
+    queryFn: () => getTradingCalendar({ days, sector: sector || undefined, maxPrice: maxPrice || undefined }),
     retry: 1,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
@@ -220,6 +223,20 @@ export default function CalendarPage() {
               </button>
             ))}
           </div>
+        </div>
+        
+        {/* Max Price Filter */}
+        <div className="flex items-center gap-2">
+          <DollarSign className="h-4 w-4 text-muted-foreground" />
+          <input
+            type="number"
+            placeholder="Max price (Rs.)"
+            value={maxPrice}
+            onChange={(e) => setMaxPrice(e.target.value ? Number(e.target.value) : '')}
+            className="input-field w-[180px]"
+            min={0}
+            step={100}
+          />
         </div>
         
         {/* Sector Filter */}

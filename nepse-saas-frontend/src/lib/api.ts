@@ -41,6 +41,7 @@ interface CalendarParams {
   days?: number;
   maxStocks?: number;
   sector?: string;
+  maxPrice?: number;
 }
 
 interface SmartMoneyParams {
@@ -192,6 +193,7 @@ export async function getTradingCalendar(params: CalendarParams = {}, signal?: A
   if (params.days) searchParams.set('days', String(params.days));
   if (params.maxStocks) searchParams.set('max_stocks', String(params.maxStocks));
   if (params.sector) searchParams.set('sector', params.sector);
+  if (params.maxPrice) searchParams.set('max_price', String(params.maxPrice));
   
   return fetchAPI<CalendarResponse>(`/api/calendar?${searchParams}`, { signal });
 }
