@@ -502,6 +502,12 @@ class MasterStockScreener:
             logger.info(f"🔧 [{tid}] Creating per-thread fetcher+sharehub")
             _thread_local.fetcher = NepseFetcher()
             _thread_local.sharehub = ShareHubAPI(auth_token=self.sharehub_token)
+            _thread_local.sharehub_token_used = self.sharehub_token
+        elif getattr(_thread_local, 'sharehub_token_used', None) != self.sharehub_token:
+            # Main thread refreshed the token after preload — update this worker's client
+            logger.debug(f"🔄 [{tid}] Refreshing ShareHub token (main thread updated)")
+            _thread_local.sharehub = ShareHubAPI(auth_token=self.sharehub_token)
+            _thread_local.sharehub_token_used = self.sharehub_token
         symbol = stock_data.get('symbol', '?')
         try:
             with _api_semaphore:
@@ -774,6 +780,13 @@ class MasterStockScreener:
         # Step 1: Pre-load all market data (reduces API calls)
         self._preload_market_data()
         
+        # After preload, refresh sharehub_token from the main thread's ShareHubAPI.
+        # _preload_market_data() may have triggered a re-login (expired token → new token).
+        # Workers use self.sharehub_token to init their own ShareHubAPI instances, so
+        # passing the fresh token means each worker starts authenticated — no parallel re-logins.
+        if self.sharehub and hasattr(self.sharehub, 'auth_token') and self.sharehub.auth_token:
+            self.sharehub_token = self.sharehub.auth_token
+        
         # Check cancel after preload
         if cancel_event and cancel_event.is_set():
             logger.warning("🛑 Scan cancelled during preload phase")
@@ -891,6 +904,10 @@ class MasterStockScreener:
         
         # Pre-load market data
         self._preload_market_data()
+        
+        # Refresh sharehub_token after preload so workers start with a fresh token
+        if self.sharehub and hasattr(self.sharehub, 'auth_token') and self.sharehub.auth_token:
+            self.sharehub_token = self.sharehub.auth_token
         
         # Get ALL stocks with turnover bypass
         stocks = self._get_active_stocks(
