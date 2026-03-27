@@ -755,7 +755,9 @@ async def run_market_scan(
 
 def _build_stealth_response(results) -> StealthResponse:
     """Convert screener results to StealthResponse (shared by sync + async paths)."""
+    logger.info(f"_build_stealth_response: received {len(results)} stocks from screener")
     stealth_stocks = []
+    filtered_count = 0
     for stock in results:
         tech_score = stock.pillar4_technical
         broker_score = stock.pillar1_broker
@@ -767,12 +769,12 @@ def _build_stealth_response(results) -> StealthResponse:
         broker_pct = (broker_score / MAX_PILLAR) * 100 if MAX_PILLAR > 0 else 0
 
         # Stealth criteria (Nepal market context):
-        # - Technically weak (< 50%) = price hasn't broken out yet → buy zone
-        # - Strong broker buying (> 55%) = institutional accumulation
+        # - Technically weak (< 60%) = price hasn't formed strong breakout yet → accumulation zone
+        # - Strong broker buying (> 50%) = institutional interest
         # - Not being actively distributed (exclude HIGH / CRITICAL sellers)
         # - Empty dist_risk means broker data unavailable → still include if broker score strong
         is_distributing = dist_risk in ("HIGH", "CRITICAL")
-        if tech_pct < 50 and broker_pct > 55 and not is_distributing:
+        if tech_pct < 60 and broker_pct > 50 and not is_distributing:
             stealth_stocks.append(StealthStock(
                 symbol=stock.symbol,
                 sector=stock.sector,
@@ -785,6 +787,10 @@ def _build_stealth_response(results) -> StealthResponse:
                 broker_profit_pct=getattr(stock, 'broker_profit_pct', 0),
                 buyer_dominance=stock.buyer_dominance_pct,
             ))
+        else:
+            filtered_count += 1
+    
+    logger.info(f"Stealth filter: {len(stealth_stocks)} passed, {filtered_count} filtered out")
     sector_map: Dict[str, List[StealthStock]] = {}
     for stock in stealth_stocks:
         if stock.sector not in sector_map:
