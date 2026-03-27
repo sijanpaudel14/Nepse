@@ -37,6 +37,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / "web" / "templates"
 STATIC_DIR = BASE_DIR / "web" / "static"
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+# Extra CORS origins from env (comma-separated). Add new domains without rebuilding.
+_extra_origins = [o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()]
 
 # Create FastAPI app
 app = FastAPI(
@@ -78,17 +80,23 @@ if STATIC_DIR.exists():
 # Templates
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.exists() else None
 
-# CORS middleware - Allow Next.js dev server
+# CORS middleware - Allow all frontend origins
+_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    FRONTEND_URL,
+    # Azure Storage static website
+    "https://nepsestorage4552333.z12.web.core.windows.net",
+    # Vercel deployments
+    "https://nepse-saas-frontend.vercel.app",
+    "https://nepse.sijanpaudel.com.np",
+    "https://nepse-saas-frontend-sijan-paudels-projects.vercel.app",
+] + _extra_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        FRONTEND_URL,
-        "https://*.z12.web.core.windows.net",  # Azure Storage
-        "https://*.azureedge.net",  # Azure CDN
-    ],
+    allow_origins=_cors_origins,
+    allow_origin_regex=r"https://nepse-saas-frontend-.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
