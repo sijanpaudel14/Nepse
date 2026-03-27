@@ -305,7 +305,13 @@ export default function ScannerPage() {
   const [sector, setSector] = useState('');
   const [maxPrice, setMaxPrice] = useState<number | ''>('');
   const [buyingSymbol, setBuyingSymbol] = useState<string | null>(null);
-  const [isScanRunning, setIsScanRunning] = useState(false);
+  const [isScanRunning, setIsScanRunning] = useState<boolean>(() => {
+    // Read synchronously so the scanning UI is visible immediately on navigation back
+    if (typeof window !== 'undefined') {
+      return window.localStorage.getItem('nepse-scan-running-v1') === '1';
+    }
+    return false;
+  });
   const [isHydratingScan, setIsHydratingScan] = useState(true);
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
@@ -432,17 +438,24 @@ export default function ScannerPage() {
     setTimeout(() => setBuyFeedback(null), 3000);
   };
 
+  // Restore: if a scan was running when the user navigated away, resume it.
+  // isScanRunning is already true from the lazy initializer above; we just
+  // need to re-trigger the fetch so results arrive when ready.
   useEffect(() => {
     if (isHydratingScan) return;
     try {
       const wasRunning = window.localStorage.getItem('nepse-scan-running-v1') === '1';
-      if (wasRunning && !isLoading && !isFetching) {
-        refetch();
+      if (wasRunning) {
+        // Don't call refetch() here — it would start a SECOND scan on the backend.
+        // The backend already has a scan running; just set isScanRunning=true (done
+        // by lazy initializer) so the loading UI is visible. Once the backend's
+        // single-scan cache fills, the next explicit scan click will return instantly.
+        setIsScanRunning(true);
       }
     } catch {
       // ignore storage access issue
     }
-  }, [isHydratingScan, isLoading, isFetching, refetch]);
+  }, [isHydratingScan]);
 
   return (
     <div className="space-y-6">

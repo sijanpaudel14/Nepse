@@ -229,8 +229,31 @@ export default function StealthPage() {
   const SCAN_STATE_KEY = 'nepse-stealth-scan-state-v1';
   const [sector, setSector] = useState('');
   const [quickMode, setQuickMode] = useState(false);
-  const [isStealthRunning, setIsStealthRunning] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
+  // Lazy-initialize so scanning UI is visible immediately on navigation back
+  const [isStealthRunning, setIsStealthRunning] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = window.localStorage.getItem(SCAN_STATE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return !!(parsed.isStealthRunning || parsed.jobId);
+        }
+      } catch { /* ignore */ }
+    }
+    return false;
+  });
+  const [jobId, setJobId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = window.localStorage.getItem('nepse-stealth-scan-state-v1');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return parsed.jobId || null;
+        }
+      } catch { /* ignore */ }
+    }
+    return null;
+  });
   const [jobProgress, setJobProgress] = useState('');
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
   const [cachedResults, setCachedResults] = useState<StealthResponse | null>(null);
@@ -254,7 +277,10 @@ export default function StealthPage() {
         if ('total_stealth_stocks' in result) {
           const stealthResult = result as StealthResponse;
           try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, quickMode, result: stealthResult })); } catch { /* quota */ }
+          // Quick scan finished — clear the "running" state from localStorage
+          try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* ignore */ }
           setCachedResults(stealthResult);
+          setIsStealthRunning(false);
           return stealthResult;
         }
         // Full scan returns job_id — start polling
@@ -267,13 +293,12 @@ export default function StealthPage() {
         return null;
       } catch (e) {
         setIsStealthRunning(false);
+        try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* ignore */ }
         throw e;
       } finally {
         stealthAbortRef.current = null;
-        // Clear quick-mode scan state (full mode persists via jobId effect below)
-        if (!jobId) {
-          try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* ignore */ }
-        }
+        // Only remove scan state for quick mode (full mode persists via jobId effect below)
+        // Use a ref-check on the result type rather than jobId state (which may not be set yet)
       }
     },
     enabled: false,
@@ -354,22 +379,19 @@ export default function StealthPage() {
     } catch {
       // ignore
     }
-    // Restore scan state if job was running
+    // Restore scan state — isStealthRunning and jobId are already set by lazy
+    // initializers above, so we only need to restore progress text for full-scan
     try {
       const raw = window.localStorage.getItem(SCAN_STATE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed.jobId && typeof parsed.jobId === 'string') {
-        setJobId(parsed.jobId);
-        setIsStealthRunning(true);
+        // Full-scan: jobId already restored by lazy init; just restore progress text
         setJobProgress(parsed.jobProgress || 'Resuming scan...');
-      } else if (parsed.isStealthRunning) {
-        // Quick-mode scan was running when user navigated away — re-trigger
-        setIsStealthRunning(false); // will be set true by refetch's queryFn
-        window.localStorage.removeItem(SCAN_STATE_KEY);
-        // Small delay to ensure component is fully mounted before refetch
-        setTimeout(() => refetch(), 100);
       }
+      // Quick-mode: isStealthRunning already true from lazy init — no refetch needed.
+      // The scan is running on the backend; when the user clicks "Run" again the
+      // cached result (5 min TTL) will return instantly.
     } catch {
       // ignore
     }
