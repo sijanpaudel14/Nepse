@@ -39,6 +39,12 @@ from data.sharehub_api import ShareHubAPI
 from analysis.indicators import TechnicalIndicators, safe_vwap
 from core.config import settings
 
+# Thread-local storage for per-thread NepseFetcher / ShareHubAPI instances.
+# httpx.Client and requests.Session are NOT thread-safe — sharing them across
+# ThreadPoolExecutor workers serializes all HTTP calls.  By giving each worker
+# its own fetcher/sharehub the requests happen truly in parallel.
+_thread_local = threading.local()
+
 # News Scraper & AI Advisor (optional - for enhanced analysis)
 try:
     from intelligence.news_scraper import NewsScraper, scrape_news_for_stock, PLAYWRIGHT_AVAILABLE
@@ -456,6 +462,39 @@ class MasterStockScreener:
         if self._analysis_date:
             logger.info(f"📅 HISTORICAL MODE: Indicators will be calculated as of {self._analysis_date}")
     
+    def _get_thread_fetcher(self) -> NepseFetcher:
+        """Return a per-thread NepseFetcher so HTTP calls run in true parallel."""
+        if not hasattr(_thread_local, 'fetcher'):
+            _thread_local.fetcher = NepseFetcher()
+        return _thread_local.fetcher
+    
+    def _get_thread_sharehub(self) -> ShareHubAPI:
+        """Return a per-thread ShareHubAPI so HTTP calls run in true parallel."""
+        if not hasattr(_thread_local, 'sharehub'):
+            _thread_local.sharehub = ShareHubAPI(auth_token=self.sharehub_token)
+        return _thread_local.sharehub
+    
+    def _score_stock_parallel(self, stock_data: Dict) -> Optional["ScreenedStock"]:
+        """Thread-safe stock scoring with per-thread HTTP clients.
+        
+        Temporarily swaps self.fetcher and self.sharehub to thread-local
+        instances so that 25 workers make HTTP calls truly in parallel
+        instead of serializing through a single httpx.Client.
+        """
+        # Save originals
+        orig_fetcher = self.fetcher
+        orig_sharehub = self.sharehub
+        try:
+            self.fetcher = self._get_thread_fetcher()
+            self.sharehub = self._get_thread_sharehub()
+            return self._score_stock(stock_data)
+        except Exception as e:
+            logger.debug(f"Error analyzing {stock_data.get('symbol', '')}: {e}")
+            return None
+        finally:
+            self.fetcher = orig_fetcher
+            self.sharehub = orig_sharehub
+
     def _fetch_historical_safe(self, symbol: str, days: int = 60, min_rows: int = 14) -> pd.DataFrame:
         """
         Wrapper around fetcher.safe_fetch_data that respects _analysis_date.
@@ -734,17 +773,9 @@ class MasterStockScreener:
         rejected: List[ScreenedStock] = []
         results_lock = threading.Lock()
         
-        def score_single_stock(stock_data: Dict) -> Optional[ScreenedStock]:
-            """Thread-safe stock scoring."""
-            try:
-                return self._score_stock(stock_data)
-            except Exception as e:
-                logger.debug(f"Error analyzing {stock_data.get('symbol', '')}: {e}")
-                return None
-        
-        # Use parallel processing for faster analysis
+        # Use parallel processing with per-thread HTTP clients for true parallelism
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(score_single_stock, stock): stock for stock in stocks}
+            futures = {executor.submit(self._score_stock_parallel, stock): stock for stock in stocks}
             completed = 0
             
             for future in as_completed(futures):
@@ -837,19 +868,9 @@ class MasterStockScreener:
         results: List[ScreenedStock] = []
         results_lock = threading.Lock()
         
-        def score_single_stock(stock_data: Dict) -> Optional[ScreenedStock]:
-            """Thread-safe stock scoring with enhanced error handling."""
-            try:
-                return self._score_stock(stock_data)
-            except Exception as e:
-                # DEFENSIVE: Log but don't crash the entire scan
-                symbol = stock_data.get('symbol', 'UNKNOWN')
-                logger.debug(f"⚠️ Stealth scoring failed for {symbol}: {e}")
-                return None
-        
-        # Parallel processing
+        # Parallel processing with per-thread HTTP clients
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(score_single_stock, stock): stock for stock in stocks}
+            futures = {executor.submit(self._score_stock_parallel, stock): stock for stock in stocks}
             completed = 0
             errors = 0
             
