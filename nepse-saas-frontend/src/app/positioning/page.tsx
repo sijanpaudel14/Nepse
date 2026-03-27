@@ -11,6 +11,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   Minus,
+,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScanHistoryPanel } from '@/components/ui';
@@ -176,7 +178,7 @@ export default function PositioningPage() {
           disabled={isLoading}
           className="btn-secondary"
         >
-          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : 'Refresh'}
+          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         </button>
       </div>
       <div className="max-w-xl">

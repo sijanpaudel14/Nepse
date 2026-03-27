@@ -12,6 +12,8 @@ import {
   Users,
   Banknote,
   ChevronRight,
+,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -183,7 +185,7 @@ export default function BulkDealsPage() {
           disabled={isLoading}
           className="btn-secondary"
         >
-          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : 'Refresh'}
+          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         </button>
       </div>
       <div className="max-w-xl">

@@ -13,6 +13,7 @@ import {
   Clock,
   Filter,
   Activity,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -193,7 +194,7 @@ export default function CalendarPage() {
           {isLoading ? (
             <Activity className="h-4 w-4 animate-spin" />
           ) : (
-            'Refresh'
+            <RefreshCw className="h-4 w-4" />
           )}
         </button>
       </div>
