@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' });
 
 export const metadata: Metadata = {
-  title: 'NEPSE AI Trading Terminal',
+  title: 'NEPSE AI Trading',
   description: 'AI-Powered Swing Trading Assistant for Nepal Stock Exchange',
   icons: {
     icon: [
