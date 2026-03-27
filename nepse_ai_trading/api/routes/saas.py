@@ -824,11 +824,11 @@ async def run_stealth_scan(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Cache for market regime data (5 minute TTL)
+# Cache for market regime data (15 minute TTL - due to high Azure→Nepal latency)
 _market_regime_cache = {
     "data": None,
     "timestamp": None,
-    "ttl_seconds": 300  # 5 minutes
+    "ttl_seconds": 900  # 15 minutes (high latency makes frequent fetches impractical)
 }
 
 def _get_cached_regime():
@@ -903,7 +903,7 @@ async def _refresh_market_regime_background():
 
 
 async def _fetch_market_regime_with_timeout():
-    """Fetch market regime with 30 second timeout (Azure->Nepal latency)."""
+    """Fetch market regime with 60 second timeout (Azure->Nepal latency + double fetch issue)."""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
     
@@ -913,26 +913,27 @@ async def _fetch_market_regime_with_timeout():
         screener = MasterStockScreener(strategy="momentum")
         regime, reason = screener.check_market_regime()
         
+        # Reuse fetcher - data is already fetched by screener
         fetcher = NepseFetcher()
-        index_df = fetcher.fetch_index_history(days=60)
+        index_df = fetcher.fetch_index_history(days=30)  # Reduced from 60 to save time
         
         nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
         ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
         
         return regime, reason, nepse_index, ema50
     
-    # Run in thread pool with 30 second timeout (Azure->Nepal has high latency)
+    # Run in thread pool with 60 second timeout (Azure->Nepal has very high latency)
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as executor:
         try:
             regime, reason, nepse_index, ema50 = await asyncio.wait_for(
                 loop.run_in_executor(executor, fetch_regime_data),
-                timeout=30.0
+                timeout=60.0
             )
         except asyncio.TimeoutError:
-            logger.warning("⏱️ NEPSE API timeout (30s), using default values")
+            logger.warning("⏱️ NEPSE API timeout (60s), using default values")
             regime = "BULL"
-            reason = "Market data temporarily unavailable (NEPSE API timeout)"
+            reason = "Market data temporarily unavailable (NEPSE API timeout - high Azure→Nepal latency)"
             nepse_index = 0
             ema50 = 0
     
