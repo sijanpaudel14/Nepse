@@ -2327,50 +2327,50 @@ async def get_trading_calendar(
                 },
             )
         
-        # Distribute stocks across days based on their readiness
-        calendar = []
+        # Build exactly `days` NEPSE trading days (Sun–Thu) starting from the next available day.
+        # Then distribute candidates evenly so ALL days appear in the calendar.
         today = datetime.now()
-        trading_day_index = 0  # tracks which trading-day slot we're on (0 = next/first)
+        trading_days = []
+        look_ahead = 0
+        while len(trading_days) < days:
+            candidate_date = today + timedelta(days=look_ahead)
+            if candidate_date.weekday() not in (4, 5):   # skip Friday(4) and Saturday(5)
+                trading_days.append(candidate_date)
+            look_ahead += 1
+            if look_ahead > days * 3:                    # safety: never infinite-loop
+                break
 
-        for i in range(days):
-            date = today + timedelta(days=i)
-            # NEPSE trades Sunday–Thursday; skip Friday (4) and Saturday (5)
-            if date.weekday() in (4, 5):
-                continue
+        # Distribute candidates evenly across all trading days (higher scores = earlier days)
+        # candidates is already sorted by score descending, top 30
+        num_days = len(trading_days)
+        calendar = []
+        stocks_per_day = max(1, len(candidates) // num_days) if num_days > 0 else 1
 
-            day_stocks = []
-            for stock in candidates:
-                score = stock.get('score', 0)
-                if score >= 70 and trading_day_index == 0:          # Top picks: next trading day
-                    day_stocks.append({
-                        "symbol": stock.get('symbol'),
-                        "name": stock.get('name', stock.get('symbol')),
-                        "sector": stock.get('sector', 'Unknown'),
-                        "entry_price": stock.get('entry_price', stock.get('ltp', 0)),
-                        "target_price": stock.get('target_price', 0),
-                        "stop_loss": stock.get('stop_loss', 0),
-                        "confidence": score,
-                        "reason": stock.get('reason', 'Strong momentum setup'),
-                    })
-                elif 50 <= score < 70 and trading_day_index in [1, 2]:  # Near-ready: 2nd/3rd trading day
-                    day_stocks.append({
-                        "symbol": stock.get('symbol'),
-                        "name": stock.get('name', stock.get('symbol')),
-                        "sector": stock.get('sector', 'Unknown'),
-                        "entry_price": stock.get('entry_price', stock.get('ltp', 0)),
-                        "target_price": stock.get('target_price', 0),
-                        "stop_loss": stock.get('stop_loss', 0),
-                        "confidence": score,
-                        "reason": stock.get('reason', 'Setup developing'),
-                    })
-            
-            if day_stocks:
-                calendar.append({
-                    "date": date.strftime('%Y-%m-%d'),
-                    "day_name": date.strftime('%A'),
-                    "stocks": day_stocks[:5],  # Max 5 per day
-                })
-            trading_day_index += 1
+        for day_idx, date in enumerate(trading_days):
+            start = day_idx * stocks_per_day
+            # last slot absorbs any remainder
+            end = start + stocks_per_day if day_idx < num_days - 1 else len(candidates)
+            day_batch = candidates[start:end]
+
+            day_stocks = [
+                {
+                    "symbol": s.get('symbol'),
+                    "name": s.get('name', s.get('symbol')),
+                    "sector": s.get('sector', 'Unknown'),
+                    "entry_price": s.get('entry_price', s.get('ltp', 0)),
+                    "target_price": s.get('target_price', 0),
+                    "stop_loss": s.get('stop_loss', 0),
+                    "confidence": round(s.get('score', 0), 1),
+                    "reason": s.get('reason', 'Momentum-based setup'),
+                }
+                for s in day_batch[:5]  # max 5 per day
+            ]
+
+            calendar.append({
+                "date": date.strftime('%Y-%m-%d'),
+                "day_name": date.strftime('%A'),
+                "stocks": day_stocks,
+            })
         
         total_stocks = sum(len(day['stocks']) for day in calendar)
         
