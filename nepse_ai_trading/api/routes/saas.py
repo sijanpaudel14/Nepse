@@ -2477,99 +2477,136 @@ async def get_trading_calendar(
     sector: Optional[str] = Query(None, description="Filter by sector"),
     max_price: Optional[float] = Query(None, description="Maximum stock price filter (Rs.)"),
 ):
-    """Get trading calendar with stock picks for each day."""
+    """
+    Get trading calendar with technically-analysed stock picks for each day.
+
+    Uses the same 4-Pillar parallel scanner as /scan (EMA crossover, RSI, volume,
+    broker flow). Results are cached for 5 minutes and shared with /scan so a
+    warm scanner means an instant calendar.
+    """
     try:
-        from data.fetcher import NepseFetcher
-        fetcher = NepseFetcher()
-        live_data = fetcher.fetch_live_market()
-        company_map = {c["symbol"]: c for c in _normalize_company_list(fetcher.fetch_company_list())}
-        candidates: List[Dict[str, Any]] = []
-        if live_data is not None and not live_data.empty:
-            for _, row in live_data.iterrows():
-                symbol = str(row.get("symbol", "")).upper()
-                if not symbol or symbol not in company_map:
-                    continue
-                company = company_map[symbol]
-                if sector and sector.lower() not in str(company.get("sector", "")).lower():
-                    continue
-                ltp = _extract_live_price(row)
-                change_pct = _to_float(row.get("percentChange", row.get("changePercent", 0)))
-                # NEPSE API returns changePct=0 when market is closed; recalculate from OHLC
-                if change_pct == 0:
-                    open_p = _to_float(row.get("open", row.get("openPrice", 0)))
-                    close_p = _to_float(row.get("close", row.get("closePrice", ltp)))
-                    if open_p > 0:
-                        change_pct = ((close_p - open_p) / open_p) * 100
-                if not _is_valid_price(ltp):
-                    continue
-                # Apply max_price filter if provided
-                if max_price is not None and ltp > max_price:
-                    continue
-                score = max(0, min(100, 50 + change_pct * 5))
-                candidates.append({
-                    "symbol": symbol,
-                    "name": company.get("name", symbol),
-                    "sector": company.get("sector", "Unknown"),
-                    "score": score,
-                    "entry_price": round(ltp * 0.99, 2),
-                    "target_price": round(ltp * 1.10, 2),
-                    "stop_loss": round(ltp * 0.95, 2),
-                    "reason": "Momentum-based quick calendar setup",
+        calendar_cache_key = f"calendar:{sector}:{max_price}:{days}"
+        cached = _get_scan_cache(calendar_cache_key)
+        if cached is not None:
+            return cached
+
+        # ── 1. Try to reuse an existing scan cache (same sector/max_price) ──────
+        scan_results: List[Any] = []
+        for strategy in ("momentum", "value", "hybrid"):
+            scan_key = f"scan:{strategy}:{sector}:{True}:{max_price}:10"
+            cached_scan = _get_scan_cache(scan_key)
+            if cached_scan is not None:
+                scan_results = cached_scan.results or []
+                logger.info(f"📦 Calendar reusing cached {strategy} scan ({len(scan_results)} stocks)")
+                break
+
+        # ── 2. If no warm cache, run a fresh quick scan with TA ─────────────────
+        if not scan_results:
+            logger.info(f"📅 Calendar: running fresh TA scan (sector={sector}, max_price={max_price})")
+            cancel_event = threading.Event()
+
+            def _do_calendar_scan():
+                screener = MasterStockScreener(
+                    strategy="momentum",
+                    target_sector=sector,
+                    max_price=max_price,
+                )
+                _, results = screener.check_market_regime(), screener.run_full_analysis(
+                    quick_mode=True, max_workers=15, cancel_event=cancel_event
+                )
+                return results
+
+            loop = asyncio.get_event_loop()
+            raw_results = await asyncio.wait_for(
+                loop.run_in_executor(_SCAN_POOL, _do_calendar_scan),
+                timeout=180.0,
+            )
+            # Convert ScreenedStock → lightweight dict (same fields calendar needs)
+            for stock in raw_results:
+                scan_results.append({
+                    "symbol": stock.symbol,
+                    "name": getattr(stock, "name", stock.symbol),
+                    "sector": stock.sector,
+                    "score": stock.total_score,
+                    "ltp": stock.ltp,
+                    "entry_price": stock.entry_price,
+                    "target_price": stock.target_price,
+                    "stop_loss": stock.stop_loss,
+                    "rsi": stock.rsi,
+                    "volume_spike": stock.volume_spike,
+                    "distribution_risk": getattr(stock, "distribution_risk", "N/A"),
+                    "reason": _build_calendar_reason(stock),
                 })
-        candidates.sort(key=lambda x: x["score"], reverse=True)
-        # Take up to 5 candidates per day so every day can show up to 5 stocks.
-        # e.g. 14 days → 70 slots, 30 days → 150 slots
-        candidates = candidates[:days * 5]
-        
-        if not candidates:
+
+        if not scan_results:
             return CalendarResponse(
                 success=True,
                 timestamp=datetime.now().isoformat(),
-                data={
-                    "scan_date": datetime.now().strftime('%Y-%m-%d'),
-                    "days_ahead": days,
-                    "total_stocks": 0,
-                    "calendar": [],
-                },
+                data={"scan_date": datetime.now().strftime('%Y-%m-%d'), "days_ahead": days,
+                      "total_stocks": 0, "calendar": []},
             )
-        
-        # Build exactly `days` NEPSE trading days (Sun–Thu) starting from the next available day.
-        # Then distribute candidates evenly so ALL days appear in the calendar.
+
+        # ── 3. Sort by score and bucket into confidence tiers ──────────────────
+        # Convert StockScanResult (from cache) or dict (from fresh scan) to dicts
+        def _to_dict(s: Any) -> Dict:
+            if isinstance(s, dict):
+                return s
+            return {
+                "symbol": s.symbol,
+                "name": getattr(s, "name", s.symbol),
+                "sector": s.sector,
+                "score": s.score,
+                "ltp": s.ltp,
+                "entry_price": s.entry_price,
+                "target_price": s.target_price,
+                "stop_loss": s.stop_loss,
+                "rsi": getattr(s, "rsi", 0),
+                "volume_spike": getattr(s, "volume_spike", 0),
+                "distribution_risk": getattr(s, "distribution_risk", "N/A"),
+                "reason": _build_calendar_reason_from_dict(s),
+            }
+
+        candidates = sorted([_to_dict(s) for s in scan_results], key=lambda x: x["score"], reverse=True)
+
+        # Keep max days*5 candidates so every day has up to 5 stocks
+        candidates = candidates[: days * 5]
+
+        # ── 4. Build trading-day calendar ─────────────────────────────────────
         today = datetime.now()
-        trading_days = []
+        trading_days: List[datetime] = []
         look_ahead = 0
         while len(trading_days) < days:
             candidate_date = today + timedelta(days=look_ahead)
-            if candidate_date.weekday() not in (4, 5):   # skip Friday(4) and Saturday(5)
+            if candidate_date.weekday() not in (4, 5):   # skip Fri+Sat (NEPSE closed)
                 trading_days.append(candidate_date)
             look_ahead += 1
-            if look_ahead > days * 3:                    # safety: never infinite-loop
+            if look_ahead > days * 3:
                 break
 
-        # Distribute candidates evenly across all trading days (higher scores = earlier days)
-        # candidates is already sorted by score descending, top 30
         num_days = len(trading_days)
-        calendar = []
-        stocks_per_day = max(1, len(candidates) // num_days) if num_days > 0 else 1
+        stocks_per_day = max(1, len(candidates) // num_days) if num_days else 1
+        calendar: List[Dict] = []
 
         for day_idx, date in enumerate(trading_days):
             start = day_idx * stocks_per_day
-            # last slot absorbs any remainder
             end = start + stocks_per_day if day_idx < num_days - 1 else len(candidates)
             day_batch = candidates[start:end]
 
             day_stocks = [
                 {
-                    "symbol": s.get('symbol'),
-                    "name": s.get('name', s.get('symbol')),
-                    "sector": s.get('sector', 'Unknown'),
-                    "entry_price": s.get('entry_price', s.get('ltp', 0)),
-                    "target_price": s.get('target_price', 0),
-                    "stop_loss": s.get('stop_loss', 0),
-                    "confidence": round(s.get('score', 0), 1),
-                    "reason": s.get('reason', 'Momentum-based setup'),
+                    "symbol": s["symbol"],
+                    "name": s.get("name", s["symbol"]),
+                    "sector": s.get("sector", "Unknown"),
+                    "entry_price": s.get("entry_price") or s.get("ltp", 0),
+                    "target_price": s.get("target_price", 0),
+                    "stop_loss": s.get("stop_loss", 0),
+                    "confidence": round(s.get("score", 0), 1),
+                    "rsi": round(s.get("rsi", 0), 1),
+                    "volume_spike": round(s.get("volume_spike", 0), 2),
+                    "distribution_risk": s.get("distribution_risk", "N/A"),
+                    "reason": s.get("reason", "Momentum-based TA setup"),
                 }
-                for s in day_batch[:5]  # max 5 per day
+                for s in day_batch[:5]
             ]
 
             calendar.append({
@@ -2577,10 +2614,10 @@ async def get_trading_calendar(
                 "day_name": date.strftime('%A'),
                 "stocks": day_stocks,
             })
-        
-        total_stocks = sum(len(day['stocks']) for day in calendar)
-        
-        return CalendarResponse(
+
+        total_stocks = sum(len(day["stocks"]) for day in calendar)
+
+        response = CalendarResponse(
             success=True,
             timestamp=datetime.now().isoformat(),
             data={
@@ -2590,10 +2627,58 @@ async def get_trading_calendar(
                 "calendar": calendar,
             },
         )
-        
+        _set_scan_cache(calendar_cache_key, response)
+        return response
+
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Calendar scan timed out. Try with a specific sector filter.")
     except Exception as e:
         logger.error(f"Calendar generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _build_calendar_reason(stock: Any) -> str:
+    """Build a human-readable reason string from a ScreenedStock object."""
+    parts = []
+    rsi = getattr(stock, "rsi", 0)
+    vol = getattr(stock, "volume_spike", 0)
+    dist = getattr(stock, "distribution_risk", "N/A")
+    score = getattr(stock, "total_score", 0)
+    if score >= 80:
+        parts.append("Strong momentum")
+    elif score >= 60:
+        parts.append("Moderate momentum")
+    if 50 <= rsi <= 65:
+        parts.append(f"RSI healthy ({rsi:.0f})")
+    if vol >= 1.5:
+        parts.append(f"Volume spike {vol:.1f}x")
+    if dist == "LOW":
+        parts.append("Low distribution risk")
+    elif dist == "HIGH":
+        parts.append("⚠ High distribution risk")
+    return " · ".join(parts) if parts else "Technical setup confirmed"
+
+
+def _build_calendar_reason_from_dict(s: Any) -> str:
+    """Build reason from StockScanResult object (from cached scan)."""
+    parts = []
+    score = getattr(s, "score", 0)
+    rsi = getattr(s, "rsi", 0)
+    vol = getattr(s, "volume_spike", 0)
+    dist = getattr(s, "distribution_risk", "N/A")
+    if score >= 80:
+        parts.append("Strong momentum")
+    elif score >= 60:
+        parts.append("Moderate momentum")
+    if 50 <= rsi <= 65:
+        parts.append(f"RSI healthy ({rsi:.0f})")
+    if vol >= 1.5:
+        parts.append(f"Volume spike {vol:.1f}x")
+    if dist == "LOW":
+        parts.append("Low distribution risk")
+    elif dist == "HIGH":
+        parts.append("⚠ High distribution risk")
+    return " · ".join(parts) if parts else "Technical setup confirmed"
 
 
 @router.get("/smart-money", response_model=SmartMoneyResponse)

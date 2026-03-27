@@ -807,6 +807,9 @@ export interface CalendarResponse {
         stop_loss: number;
         confidence: number;
         reason: string;
+        rsi?: number;
+        volume_spike?: number;
+        distribution_risk?: string;
       }>;
     }>;
   };

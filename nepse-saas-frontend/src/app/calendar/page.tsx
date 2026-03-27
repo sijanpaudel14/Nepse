@@ -63,6 +63,32 @@ function CalendarStockCard({ stock }: { stock: CalendarResponse['data']['calenda
           <span className="text-muted-foreground">Stop</span>
           <span className="font-mono text-bear">Rs. {stock.stop_loss.toLocaleString()}</span>
         </div>
+        {stock.rsi ? (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">RSI</span>
+            <span className={cn(
+              'font-mono',
+              stock.rsi >= 50 && stock.rsi <= 65 ? 'text-bull' : 'text-muted-foreground'
+            )}>{stock.rsi.toFixed(1)}</span>
+          </div>
+        ) : null}
+        {stock.volume_spike ? (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Vol×</span>
+            <span className={cn('font-mono', stock.volume_spike >= 1.5 ? 'text-bull' : 'text-muted-foreground')}>
+              {stock.volume_spike.toFixed(1)}x
+            </span>
+          </div>
+        ) : null}
+        {stock.distribution_risk && stock.distribution_risk !== 'N/A' ? (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Risk</span>
+            <span className={cn(
+              'font-mono uppercase text-[10px] font-bold',
+              stock.distribution_risk === 'LOW' ? 'text-bull' : stock.distribution_risk === 'HIGH' ? 'text-bear' : 'text-amber-500'
+            )}>{stock.distribution_risk}</span>
+          </div>
+        ) : null}
       </div>
       
       <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{stock.reason}</p>
