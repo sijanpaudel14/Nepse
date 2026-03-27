@@ -3150,18 +3150,27 @@ async def get_order_flow(symbol: str):
 
 
 @router.get("/broker-intelligence", response_model=BrokerIntelResponse)
-async def get_broker_intelligence():
+async def get_broker_intelligence(
+    sector: Optional[str] = Query(None, description="Filter by sector"),
+):
     """Get aggressive broker activity and stock concentration."""
     try:
         from data.fetcher import NepseFetcher
         fetcher = NepseFetcher()
         live_data = fetcher.fetch_live_market()
+        company_map = {c["symbol"]: c for c in _normalize_company_list(fetcher.fetch_company_list())}
         report_stocks: List[Dict[str, Any]] = []
         if live_data is not None and not live_data.empty:
             for _, row in live_data.iterrows():
                 symbol = str(row.get("symbol", "")).upper()
                 if not symbol:
                     continue
+                
+                # Apply sector filter
+                if sector and symbol in company_map:
+                    stock_sector = str(company_map[symbol].get("sector", "")).lower()
+                    if sector.lower() not in stock_sector:
+                        continue
                 
                 # Calculate change percentage - use close vs open if API doesn't provide it
                 change_pct = _to_float(row.get("percentChange", row.get("changePercent", None)))

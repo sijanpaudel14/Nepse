@@ -13,10 +13,11 @@ import {
   AlertTriangle,
   ChevronRight,
   RefreshCw,
+  Filter,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
-import { ScanHistoryPanel } from '@/components/ui';
+import { ScanHistoryPanel, PrettySelect } from '@/components/ui';
 import {
   loadScanHistory,
   pushScanHistory,
@@ -146,21 +147,51 @@ function StockRow({
 }
 
 export default function BrokerIntelPage() {
+  const STORAGE_KEY = 'nepse-broker-intel-ui-v1';
   const HISTORY_KEY = 'nepse-broker-intel-history-v1';
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
+  const [sector, setSector] = useState('');
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.sector === 'string') setSector(parsed.sector);
+    } catch {
+      // ignore invalid storage
+    }
+  }, []);
 
   useEffect(() => {
     setHistory(loadScanHistory(HISTORY_KEY));
   }, []);
 
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sector }));
+  }, [sector]);
+
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['broker-intelligence'],
-    queryFn: () => getBrokerIntelligence(),
+    queryKey: ['broker-intelligence', sector],
+    queryFn: () => getBrokerIntelligence({ sector: sector || undefined }),
     retry: 1,
     staleTime: 5 * 60 * 1000,
   });
 
   const result = data?.data;
+
+  const sectors = [
+    { value: '', label: 'All Sectors' },
+    { value: 'hydro', label: 'Hydropower' },
+    { value: 'bank', label: 'Banking' },
+    { value: 'commercial', label: 'Commercial Banks' },
+    { value: 'finance', label: 'Finance' },
+    { value: 'microfinance', label: 'Microfinance' },
+    { value: 'life', label: 'Life Insurance' },
+    { value: 'non_life', label: 'Non-Life Insurance' },
+    { value: 'hotel', label: 'Hotels & Tourism' },
+    { value: 'manufacturing', label: 'Manufacturing' },
+  ];
 
   return (
     <div className="space-y-6">
@@ -179,8 +210,8 @@ export default function BrokerIntelPage() {
           onClick={() => {
             setHistory(
               pushScanHistory(HISTORY_KEY, {
-                label: 'Broker Intelligence Refresh',
-                value: 'refresh',
+                label: `Broker Intel | ${sector || 'All sectors'}`,
+                value: JSON.stringify({ sector }),
               })
             );
             refetch();
@@ -191,11 +222,31 @@ export default function BrokerIntelPage() {
           {isFetching ? <Activity className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         </button>
       </div>
+
+      {/* Sector Filter */}
+      <div className="flex items-center gap-2">
+        <Filter className="h-4 w-4 text-muted-foreground" />
+        <PrettySelect
+          value={sector}
+          onChange={setSector}
+          options={sectors}
+          className="min-w-[240px]"
+        />
+      </div>
+
       <div className="max-w-xl">
         <ScanHistoryPanel
           title="Broker Intelligence History"
           items={history}
-          onSelect={() => refetch()}
+          onSelect={(value) => {
+            try {
+              const parsed = JSON.parse(value) as { sector: string };
+              if (typeof parsed.sector === 'string') setSector(parsed.sector);
+              setTimeout(() => refetch(), 0);
+            } catch {
+              // ignore invalid history entry
+            }
+          }}
           onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
           onClear={() => {
             clearScanHistory(HISTORY_KEY);
