@@ -146,7 +146,7 @@ export default function SmartMoneyPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sector }));
   }, [sector]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['smart-money', sector],
     queryFn: () => getSmartMoney({ sector: sector || undefined }),
     retry: 1,
@@ -189,10 +189,10 @@ export default function SmartMoneyPage() {
             );
             refetch();
           }}
-          disabled={isLoading}
+          disabled={isFetching}
           className="btn-secondary mr-24"
         >
-          {isLoading ? (
+          {isFetching ? (
             <Activity className="h-4 w-4 animate-spin" />
           ) : (
             'Refresh'

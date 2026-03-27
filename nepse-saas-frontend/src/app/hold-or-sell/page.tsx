@@ -83,7 +83,7 @@ export default function HoldOrSellPage() {
     );
   }, [symbol, buyPrice, buyDate, searchParams, hydrated]);
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isFetching, isError, error } = useQuery({
     queryKey: ['position-advice', searchParams],
     queryFn: () => searchParams ? getPositionAdvice({
       symbol: searchParams.symbol,
@@ -92,6 +92,7 @@ export default function HoldOrSellPage() {
     }) : Promise.reject('No params'),
     enabled: !!searchParams,
     retry: 1,
+    staleTime: 0,
   });
 
   const handleSubmit = () => {
@@ -162,7 +163,7 @@ export default function HoldOrSellPage() {
               disabled={!symbol.trim() || buyPrice <= 0 || isLoading}
               className="w-full btn-primary"
             >
-              {isLoading ? (
+              {isFetching ? (
                 <span className="flex items-center gap-2">
                   <Activity className="h-4 w-4 animate-spin" />
                   Analyzing...

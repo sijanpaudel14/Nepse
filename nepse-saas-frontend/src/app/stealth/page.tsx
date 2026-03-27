@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { runStealthScan, type SectorRotation, type StealthStock } from '@/lib/api';
+import { runStealthScan, type SectorRotation, type StealthStock, type StealthResponse } from '@/lib/api';
 import { 
   Radar,
   Loader2,
@@ -224,27 +224,37 @@ function StealthStockRow({ stock }: { stock: StealthStock }) {
 
 export default function StealthPage() {
   const STORAGE_KEY = 'nepse-stealth-ui-v1';
+  const RESULTS_KEY = 'nepse-stealth-results-v1'; // persist scan results across nav
   const HISTORY_KEY = 'nepse-stealth-history-v1';
   const [sector, setSector] = useState('');
   const stealthAbortRef = useRef<AbortController | null>(null);
   const [isStealthRunning, setIsStealthRunning] = useState(false);
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
+  const [cachedResults, setCachedResults] = useState<StealthResponse | null>(null); // last successful scan
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data: queryData, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['stealth-scan', sector],
     queryFn: async () => {
       const controller = new AbortController();
       stealthAbortRef.current = controller;
       setIsStealthRunning(true);
       try {
-        return await runStealthScan({ sector: sector || undefined }, controller.signal);
+        const result = await runStealthScan({ sector: sector || undefined }, controller.signal);
+        // Persist fresh results so user sees them on return navigation
+        try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, result })); } catch { /* quota */ }
+        setCachedResults(result);
+        return result;
       } finally {
         setIsStealthRunning(false);
         stealthAbortRef.current = null;
       }
     },
     enabled: false,
+    gcTime: Infinity, // keep in React Query cache forever (until explicit refetch)
   });
+
+  // Use live data if available, otherwise fall back to localStorage cache
+  const data = queryData ?? cachedResults;
 
   useEffect(() => {
     setHistory(loadScanHistory(HISTORY_KEY));
@@ -258,6 +268,15 @@ export default function StealthPage() {
       if (typeof parsed.sector === 'string') setSector(parsed.sector);
     } catch {
       // ignore invalid storage
+    }
+    // Load cached results from previous session
+    try {
+      const raw = window.localStorage.getItem(RESULTS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed.result) setCachedResults(parsed.result);
+    } catch {
+      // ignore
     }
   }, []);
 
@@ -343,13 +362,13 @@ export default function StealthPage() {
 
         <button
           onClick={handleScan}
-          disabled={isLoading || isStealthRunning}
+          disabled={isFetching || isStealthRunning}
           className={cn(
             'flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 font-semibold text-primary-foreground transition-colors hover:bg-primary/90',
-            (isLoading || isStealthRunning) && 'cursor-not-allowed opacity-50'
+            (isFetching || isStealthRunning) && 'cursor-not-allowed opacity-50'
           )}
         >
-          {isLoading || isStealthRunning ? (
+          {isFetching || isStealthRunning ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
               Scanning...
@@ -397,7 +416,7 @@ export default function StealthPage() {
       </div>
 
       {/* Results */}
-      {(isLoading || isStealthRunning) && (
+      {(isFetching || isStealthRunning) && (
         <div className="flex flex-col items-center justify-center py-16">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
           <p className="mt-4 text-lg font-medium">Scanning for stealth accumulation...</p>
@@ -405,7 +424,7 @@ export default function StealthPage() {
         </div>
       )}
 
-      {data && !isLoading && (
+      {data && !isFetching && (
         <div className="space-y-6">
           {/* Summary */}
           <div className="grid gap-4 md:grid-cols-3">
@@ -449,7 +468,7 @@ export default function StealthPage() {
         </div>
       )}
 
-      {!data && !isLoading && (
+      {!data && !isFetching && (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16">
           <Radar className="h-12 w-12 text-muted-foreground" />
           <h3 className="mt-4 text-xl font-semibold">Ready to Detect Smart Money</h3>

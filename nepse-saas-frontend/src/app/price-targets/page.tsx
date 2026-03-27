@@ -157,11 +157,12 @@ export default function PriceTargetsPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['price-targets', searchSymbol],
     queryFn: () => getPriceTargets(searchSymbol),
     enabled: !!searchSymbol,
     retry: 1,
+    staleTime: 0,
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -210,7 +211,7 @@ export default function PriceTargetsPage() {
           disabled={!symbol.trim() || isLoading}
           className="btn-primary"
         >
-          {isLoading ? (
+          {isFetching ? (
             <Activity className="h-4 w-4 animate-spin" />
           ) : (
             <>

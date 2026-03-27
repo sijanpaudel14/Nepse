@@ -108,7 +108,7 @@ export default function DividendPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
   
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['dividend-forecast', searchSymbol],
     queryFn: () => getDividendForecast(searchSymbol),
     enabled: searchSymbol.length >= 2,

@@ -149,7 +149,7 @@ export default function BulkDealsPage() {
     setHistory(loadScanHistory(HISTORY_KEY));
   }, []);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['bulk-deals'],
     queryFn: () => getBulkDeals(),
     retry: 1,
@@ -181,7 +181,7 @@ export default function BulkDealsPage() {
             );
             refetch();
           }}
-          disabled={isLoading}
+          disabled={isFetching}
           className="btn-secondary mr-24"
         >
           {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}

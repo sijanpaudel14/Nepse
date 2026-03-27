@@ -144,7 +144,7 @@ export default function OrderFlowPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
   
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['order-flow', searchSymbol],
     queryFn: () => getOrderFlow(searchSymbol),
     enabled: searchSymbol.length >= 2,

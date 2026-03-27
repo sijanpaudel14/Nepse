@@ -153,7 +153,7 @@ export default function CalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['trading-calendar', days, sector],
     queryFn: () => getTradingCalendar({ days, sector: sector || undefined }),
     retry: 1,
@@ -188,10 +188,10 @@ export default function CalendarPage() {
         
         <button
           onClick={() => refetch()}
-          disabled={isLoading}
+          disabled={isFetching}
           className="btn-secondary mr-24"
         >
-          {isLoading ? (
+          {isFetching ? (
             <Activity className="h-4 w-4 animate-spin" />
           ) : (
             <RefreshCw className="h-4 w-4" />

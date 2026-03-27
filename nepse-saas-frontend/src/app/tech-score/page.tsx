@@ -185,11 +185,12 @@ export default function TechScorePage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['tech-score', searchSymbol],
     queryFn: () => getTechScore(searchSymbol),
     enabled: !!searchSymbol,
     retry: 1,
+    staleTime: 0,
   });
 
   const handleSubmit = (e: React.FormEvent) => {

@@ -163,7 +163,7 @@ export default function IPOExitPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isFetching, isError, error } = useQuery({
     queryKey: ['ipo-exit', searchSymbol, refreshKey], // refreshKey forces re-fetch on every Analyze click
     queryFn: () => getIPOExit({ symbol: searchSymbol }),
     enabled: !!searchSymbol,
@@ -204,12 +204,12 @@ export default function IPOExitPage() {
             onChange={setSymbol}
             onSubmit={handleAnalyze}
             placeholder="Enter IPO symbol (e.g., SOHL)"
-            isLoading={isLoading}
+            isLoading={isFetching}
           />
         </div>
         <button
           onClick={handleAnalyze}
-          disabled={isLoading || !symbol.trim()}
+          disabled={isFetching || !symbol.trim()}
           className="px-6 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground rounded-lg font-semibold transition-colors flex items-center gap-2"
         >
           <Activity className="h-4 w-4" />

@@ -16,7 +16,7 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 import math
 import re
@@ -24,6 +24,14 @@ import requests
 import threading
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+
+
+def _is_nepse_trading_day(dt: datetime | None = None) -> bool:
+    """Return True if `dt` (defaults to now) is a NEPSE trading day (Sun–Thu Nepal time).
+    Nepal is UTC+5:45. NEPSE is closed on Fridays (4) and Saturdays (5)."""
+    nepal_tz = timezone(timedelta(hours=5, minutes=45))
+    now_nepal = (dt or datetime.now()).astimezone(nepal_tz)
+    return now_nepal.weekday() not in (4, 5)  # 4=Friday, 5=Saturday
 
 from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel, Field
@@ -2190,9 +2198,13 @@ async def get_ipo_exit_analysis(symbol: str):
                         volumes = list(vt.get("volumes", []))
                         today_label = datetime.now().strftime("%Y-%m-%d")
                         if dates and dates[-1] == today_label:
+                            # Update existing today entry
                             if volumes:
                                 volumes[-1] = live_volume
-                        else:
+                        elif _is_nepse_trading_day():
+                            # Only append today if it is actually a trading day (Sun–Thu Nepal time).
+                            # On Fridays/Saturdays the API returns stale yesterday volume which
+                            # would create a phantom duplicate row with the wrong date.
                             dates.append(today_label)
                             volumes.append(live_volume)
                             if len(dates) > 8:
@@ -2278,6 +2290,12 @@ async def get_trading_calendar(
                     continue
                 ltp = _extract_live_price(row)
                 change_pct = _to_float(row.get("percentChange", row.get("changePercent", 0)))
+                # NEPSE API returns changePct=0 when market is closed; recalculate from OHLC
+                if change_pct == 0:
+                    open_p = _to_float(row.get("open", row.get("openPrice", 0)))
+                    close_p = _to_float(row.get("close", row.get("closePrice", ltp)))
+                    if open_p > 0:
+                        change_pct = ((close_p - open_p) / open_p) * 100
                 if not _is_valid_price(ltp):
                     continue
                 score = max(0, min(100, 50 + change_pct * 5))
@@ -2309,19 +2327,18 @@ async def get_trading_calendar(
         # Distribute stocks across days based on their readiness
         calendar = []
         today = datetime.now()
-        
+        trading_day_index = 0  # tracks which trading-day slot we're on (0 = next/first)
+
         for i in range(days):
             date = today + timedelta(days=i)
-            # Skip weekends
-            if date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+            # NEPSE trades Sunday–Thursday; skip Friday (4) and Saturday (5)
+            if date.weekday() in (4, 5):
                 continue
-            
+
             day_stocks = []
             for stock in candidates:
-                # Assign stocks to different days based on their setup readiness
-                # Simple heuristic: higher scores = sooner entry
                 score = stock.get('score', 0)
-                if score >= 70 and i == 0:  # Top picks today
+                if score >= 70 and trading_day_index == 0:          # Top picks: next trading day
                     day_stocks.append({
                         "symbol": stock.get('symbol'),
                         "name": stock.get('name', stock.get('symbol')),
@@ -2332,7 +2349,7 @@ async def get_trading_calendar(
                         "confidence": score,
                         "reason": stock.get('reason', 'Strong momentum setup'),
                     })
-                elif 50 <= score < 70 and i in [1, 2]:  # Near-ready picks
+                elif 50 <= score < 70 and trading_day_index in [1, 2]:  # Near-ready: 2nd/3rd trading day
                     day_stocks.append({
                         "symbol": stock.get('symbol'),
                         "name": stock.get('name', stock.get('symbol')),
@@ -2350,6 +2367,7 @@ async def get_trading_calendar(
                     "day_name": date.strftime('%A'),
                     "stocks": day_stocks[:5],  # Max 5 per day
                 })
+            trading_day_index += 1
         
         total_stocks = sum(len(day['stocks']) for day in calendar)
         

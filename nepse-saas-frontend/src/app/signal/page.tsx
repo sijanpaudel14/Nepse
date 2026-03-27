@@ -70,11 +70,12 @@ export default function SignalPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['signal', searchSymbol],
     queryFn: () => getSignal({ symbol: searchSymbol }),
     enabled: !!searchSymbol,
     retry: 1,
+    staleTime: 0,
   });
 
   const handleSubmit = () => {
@@ -131,7 +132,7 @@ export default function SignalPage() {
           onChange={setSymbol}
           onSubmit={handleSubmit}
           placeholder="Enter stock symbol (e.g., NABIL)"
-          isLoading={isLoading}
+          isLoading={isFetching}
         />
       </div>
       <div className="max-w-md">
