@@ -156,7 +156,7 @@ export default function DividendPage() {
           />
         </div>
         <button type="submit" disabled={!symbol.trim() || isLoading} className="btn-primary">
-          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : 'Analyze'}
+          {isFetching ? <Activity className="h-4 w-4 animate-spin" /> : 'Analyze'}
         </button>
       </form>
       <div className="max-w-md">

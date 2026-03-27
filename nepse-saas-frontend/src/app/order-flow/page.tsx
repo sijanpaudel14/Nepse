@@ -196,7 +196,7 @@ export default function OrderFlowPage() {
           />
         </div>
         <button type="submit" disabled={!symbol.trim() || isLoading} className="btn-primary">
-          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : 'Analyze Flow'}
+          {isFetching ? <Activity className="h-4 w-4 animate-spin" /> : 'Analyze Flow'}
         </button>
       </form>
       <div className="max-w-md">

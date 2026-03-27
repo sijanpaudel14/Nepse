@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getSignal, type SignalResponse } from '@/lib/api';
 import { 
@@ -44,6 +44,7 @@ export default function SignalPage() {
   const HISTORY_KEY = 'nepse-signal-history-v1';
   const [symbol, setSymbol] = useState('');
   const [searchSymbol, setSearchSymbol] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
   const [hydrated, setHydrated] = useState(false);
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
@@ -70,15 +71,15 @@ export default function SignalPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
 
-  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
-    queryKey: ['signal', searchSymbol],
+  const { data, isLoading, isFetching, isError, error } = useQuery({
+    queryKey: ['signal', searchSymbol, refreshKey],
     queryFn: () => getSignal({ symbol: searchSymbol }),
     enabled: !!searchSymbol,
     retry: 1,
     staleTime: 0,
   });
 
-  const handleSubmit = () => {
+  const handleSubmit = useCallback(() => {
     const clean = symbol.trim().toUpperCase();
     if (!clean) return;
     setHistory(
@@ -87,12 +88,9 @@ export default function SignalPage() {
         value: clean,
       })
     );
-    if (clean === searchSymbol) {
-      refetch();
-    } else {
-      setSearchSymbol(clean);
-    }
-  };
+    setSearchSymbol(clean);
+    setRefreshKey((k) => k + 1);
+  }, [symbol]);
 
   const signal = data?.data;
 
@@ -126,14 +124,23 @@ export default function SignalPage() {
       </div>
 
       {/* Symbol Input */}
-      <div className="max-w-md">
-        <SymbolInput
-          value={symbol}
-          onChange={setSymbol}
-          onSubmit={handleSubmit}
-          placeholder="Enter stock symbol (e.g., NABIL)"
-          isLoading={isFetching}
-        />
+      <div className="max-w-2xl flex gap-2">
+        <div className="flex-1">
+          <SymbolInput
+            value={symbol}
+            onChange={setSymbol}
+            onSubmit={handleSubmit}
+            placeholder="Enter stock symbol (e.g., NABIL)"
+          />
+        </div>
+        <button
+          onClick={handleSubmit}
+          disabled={isFetching || !symbol.trim()}
+          className="px-6 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground rounded-lg font-semibold transition-colors flex items-center gap-2"
+        >
+          <Activity className={cn('h-4 w-4', isFetching && 'animate-spin')} />
+          Analyze
+        </button>
       </div>
       <div className="max-w-md">
         <ScanHistoryPanel
@@ -141,11 +148,8 @@ export default function SignalPage() {
           items={history}
           onSelect={(value) => {
             setSymbol(value);
-            if (value === searchSymbol) {
-              refetch();
-            } else {
-              setSearchSymbol(value);
-            }
+            setSearchSymbol(value);
+            setRefreshKey((k) => k + 1);
           }}
           onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
           onClear={() => {

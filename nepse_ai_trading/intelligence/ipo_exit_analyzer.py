@@ -358,7 +358,11 @@ class IPOExitAnalyzer:
                         if 'date' in row:
                             trade_date = pd.to_datetime(row['date']).date()
                         else:
-                            # Assume it's today's data if no date field
+                            # No date field — only treat as today if NEPSE is open (Sun–Thu)
+                            # weekday(): Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+                            if today.weekday() in (4, 5):  # Friday or Saturday — NEPSE closed
+                                logger.debug("No date field in live data and today is Fri/Sat (NEPSE closed). Skipping stale data.")
+                                return None
                             trade_date = today
                         
                         # Only return if data is actually from today

@@ -232,7 +232,7 @@ export default function TechScorePage() {
           />
         </div>
         <button type="submit" disabled={!symbol.trim() || isLoading} className="btn-primary">
-          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : <><Gauge className="h-4 w-4" /> Analyze</>}
+          {isFetching ? <Activity className="h-4 w-4 animate-spin" /> : <><Gauge className="h-4 w-4" /> Analyze</>}
         </button>
       </form>
       <div className="max-w-md">

@@ -184,7 +184,7 @@ export default function BulkDealsPage() {
           disabled={isFetching}
           className="btn-secondary mr-24"
         >
-          {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {isFetching ? <Activity className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         </button>
       </div>
       <div className="max-w-xl">
@@ -221,7 +221,7 @@ export default function BulkDealsPage() {
 
       {/* Results */}
       {result && (
-        <div className="space-y-6">
+        <div className={`space-y-6 transition-opacity duration-300 ${isFetching ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
           {/* Summary Stats */}
           <div className="grid md:grid-cols-4 gap-4">
             <StatCard 
