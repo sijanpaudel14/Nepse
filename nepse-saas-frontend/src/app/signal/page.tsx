@@ -194,7 +194,30 @@ function SignalContent() {
         />
       )}
 
-      {signal && (
+      {signal && signal.current_price === 0 && signal.confidence === 0 && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-6 w-6 text-amber-500 shrink-0" />
+            <div>
+              <h3 className="text-lg font-semibold">{signal.symbol} — {signal.name}</h3>
+              <p className="text-sm text-muted-foreground">{signal.sector}</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {signal.warnings?.map((w, i) => (
+              <p key={i} className="text-sm text-amber-600 dark:text-amber-400">{w}</p>
+            ))}
+            {signal.recommendation && (
+              <p className="text-sm font-medium mt-2">{signal.recommendation}</p>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground border-t border-border pt-3">
+            Come back once the stock has at least 7 trading days on NEPSE. Use the IPO Exit Analyzer in the meantime.
+          </p>
+        </div>
+      )}
+
+      {signal && signal.current_price > 0 && (
         <div className="space-y-6">
           {/* Main Signal Card */}
           <div className="rounded-xl border border-border bg-card p-6">
