@@ -226,6 +226,7 @@ export default function StealthPage() {
   const STORAGE_KEY = 'nepse-stealth-ui-v1';
   const RESULTS_KEY = 'nepse-stealth-results-v1';
   const HISTORY_KEY = 'nepse-stealth-history-v1';
+  const SCAN_STATE_KEY = 'nepse-stealth-scan-state-v1';
   const [sector, setSector] = useState('');
   const [quickMode, setQuickMode] = useState(false);
   const [isStealthRunning, setIsStealthRunning] = useState(false);
@@ -277,6 +278,8 @@ export default function StealthPage() {
         setIsStealthRunning(false);
         setJobId(null);
         setJobProgress('');
+        // Clear scan state from localStorage
+        try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* quota */ }
         try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, quickMode, result: status.result })); } catch { /* quota */ }
         setCachedResults(status.result);
       } else if (status.status === 'error') {
@@ -285,6 +288,8 @@ export default function StealthPage() {
         setIsStealthRunning(false);
         setJobId(null);
         setJobProgress(`Scan failed: ${status.error}`);
+        // Clear scan state on error
+        try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* quota */ }
       } else {
         setJobProgress(status.status === 'running' ? 'Analyzing stocks... (this takes 5-10 min for full scan)' : 'Queued...');
       }
@@ -329,11 +334,35 @@ export default function StealthPage() {
     } catch {
       // ignore
     }
+    // Restore scan state if job was running
+    try {
+      const raw = window.localStorage.getItem(SCAN_STATE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed.jobId && typeof parsed.jobId === 'string') {
+        setJobId(parsed.jobId);
+        setIsStealthRunning(true);
+        setJobProgress(parsed.jobProgress || 'Resuming scan...');
+      }
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sector, quickMode }));
   }, [sector, quickMode]);
+
+  // Persist scan state to localStorage when job is running
+  useEffect(() => {
+    if (jobId && isStealthRunning) {
+      try {
+        window.localStorage.setItem(SCAN_STATE_KEY, JSON.stringify({ jobId, jobProgress, isStealthRunning }));
+      } catch {
+        // ignore quota errors
+      }
+    }
+  }, [jobId, jobProgress, isStealthRunning]);
 
   const handleScan = () => {
     setHistory(
