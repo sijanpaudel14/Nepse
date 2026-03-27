@@ -45,6 +45,9 @@ from core.config import settings
 # its own fetcher/sharehub the requests happen truly in parallel.
 _thread_local = threading.local()
 
+# Limit concurrent API calls to avoid overwhelming NEPSE/ShareHub servers
+_api_semaphore = threading.Semaphore(15)
+
 # News Scraper & AI Advisor (optional - for enhanced analysis)
 try:
     from intelligence.news_scraper import NewsScraper, scrape_news_for_stock, PLAYWRIGHT_AVAILABLE
@@ -468,7 +471,8 @@ class MasterStockScreener:
         self._player_favorites: Dict[str, Dict] = {}
         self._unlock_risks: Dict[str, Dict] = {}
         self._broker_accumulation: Dict[str, Dict] = {}
-        self._distribution_risk_cache: Dict[str, Dict] = {}  # NEW: Distribution risk per symbol
+        self._distribution_risk_cache: Dict[str, Dict] = {}
+        self._dist_risk_lock = threading.Lock()  # Thread-safe writes to dist risk cache
         self._fundamentals_cache: Dict[str, Dict] = {}
         self._sector_performance_cache: Dict[str, float] = {}  # Sector 5-day return
         self._sector_trend_cache: Dict[str, float] = {}        # Sector 1-day trend (New)
@@ -492,20 +496,21 @@ class MasterStockScreener:
             logger.info(f"📅 HISTORICAL MODE: Indicators will be calculated as of {self._analysis_date}")
     
     def _score_stock_parallel(self, stock_data: Dict) -> Optional["ScreenedStock"]:
-        """Thread-safe stock scoring with per-thread HTTP clients.
-        
-        Sets thread-local NepseFetcher and ShareHubAPI instances so that
-        all self.fetcher / self.sharehub reads inside _score_stock()
-        resolve to this thread's own HTTP client (via the @property).
-        """
-        # Lazily create per-thread HTTP clients (created once, reused across stocks)
+        """Thread-safe stock scoring with per-thread HTTP clients."""
+        tid = threading.current_thread().name
         if not hasattr(_thread_local, 'fetcher') or _thread_local.fetcher is None:
+            logger.info(f"🔧 [{tid}] Creating per-thread fetcher+sharehub")
             _thread_local.fetcher = NepseFetcher()
             _thread_local.sharehub = ShareHubAPI(auth_token=self.sharehub_token)
+        symbol = stock_data.get('symbol', '?')
         try:
-            return self._score_stock(stock_data)
+            with _api_semaphore:
+                logger.debug(f"⚡ [{tid}] START scoring {symbol}")
+                result = self._score_stock(stock_data)
+                logger.debug(f"✅ [{tid}] DONE  scoring {symbol}")
+                return result
         except Exception as e:
-            logger.debug(f"Error analyzing {stock_data.get('symbol', '')}: {e}")
+            logger.warning(f"❌ [{tid}] ERROR scoring {symbol}: {e}")
             return None
 
     def _fetch_historical_safe(self, symbol: str, days: int = 60, min_rows: int = 14) -> pd.DataFrame:
@@ -713,21 +718,17 @@ class MasterStockScreener:
         top_n: int = 10,
         include_rejected: bool = False,
         quick_mode: bool = False,
-        max_workers: int = 50,
+        max_workers: int = 15,
         cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """
         🚀 Run the complete 4-Pillar analysis on ALL NEPSE stocks.
         
-        🛡️ RISK MANAGEMENT:
-        - PANIC MODE: Returns empty list (no BUY signals)
-        - BEAR MARKET: Disables momentum strategy, uses tighter stops
-        
         Args:
             min_score: Minimum score to include (default 60)
             top_n: Number of top stocks to return
-            include_rejected: Whether to include rejected stocks (for debugging)
-            quick_mode: If True, only analyze top 50 stocks by volume (5x faster)
+            include_rejected: Whether to include rejected stocks
+            quick_mode: If True, only analyze top 50 stocks by volume
             max_workers: Number of parallel threads for analysis
             cancel_event: If set, check this event between stocks to support early stop
         
@@ -773,6 +774,11 @@ class MasterStockScreener:
         # Step 1: Pre-load all market data (reduces API calls)
         self._preload_market_data()
         
+        # Check cancel after preload
+        if cancel_event and cancel_event.is_set():
+            logger.warning("🛑 Scan cancelled during preload phase")
+            return []
+        
         # Step 2: Get all active stocks
         stocks = self._get_active_stocks(quick_mode=quick_mode)
         
@@ -787,6 +793,8 @@ class MasterStockScreener:
         results: List[ScreenedStock] = []
         rejected: List[ScreenedStock] = []
         results_lock = threading.Lock()
+        
+        logger.info(f"🚀 Starting PARALLEL scoring: {len(stocks)} stocks × {max_workers} workers")
         
         # Use parallel processing with per-thread HTTP clients for true parallelism
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -857,7 +865,7 @@ class MasterStockScreener:
     def run_stealth_analysis(
         self,
         top_n: int = 500,
-        max_workers: int = 50,
+        max_workers: int = 15,
         cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """
@@ -1252,11 +1260,10 @@ class MasterStockScreener:
                             "change_pct": h.get("changePercentage", 0),
                         }
                         
-                        # Calculate Distribution Risk
-                        self._calculate_distribution_risk(sym, ltp, h, h_7d)
+                        # NOTE: Distribution risk is now calculated ON-DEMAND in parallel workers
+                        # (was previously sequential here, taking 3+ minutes for 38 stocks)
                         
                 logger.info(f"   ✅ Loaded {len(self._broker_accumulation)} broker holdings")
-                logger.info(f"   📊 Calculated distribution risk for {len(self._distribution_risk_cache)} stocks")
             except Exception as e:
                 logger.warning(f"   ⚠️ Could not load broker accumulation: {e}")
         else:
@@ -1512,30 +1519,29 @@ class MasterStockScreener:
                     penalty = min(penalty, intraday_penalty)  # Take the more severe penalty
                     logger.info(f"   🚨 {symbol}: Intraday dump detected! Upgraded risk to {distribution_risk}")
             
-            # Store in cache
-            self._distribution_risk_cache[symbol] = {
-                "avg_cost": round(broker_avg_cost, 2),
-                "avg_cost_1w": round(broker_avg_cost_1w, 2) if broker_avg_cost_1w else None,
-                "profit_pct": round(broker_profit_pct, 2),
-                "risk_level": distribution_risk,
-                "warning": warning,
-                "penalty": penalty,
-                "is_seller_dominant": is_seller_dominant,
-                "seller_weight": seller_weight,
-                "lookback_days": lookback_used,
-                "calculation_method": calculation_method,
-                # Dual timeframe analysis
-                "net_holdings_1m": net_holdings_1m,
-                "net_holdings_1w": net_holdings_1w,
-                "distribution_divergence": distribution_divergence,
-                # New intraday distribution data
-                "intraday_dump_detected": intraday_risk.get("dump_detected", False) if intraday_risk else False,
-                "open_price": intraday_risk.get("open_price", 0) if intraday_risk else 0,
-                "open_vs_broker_pct": intraday_risk.get("open_vs_broker_pct", 0) if intraday_risk else 0,
-                "close_vs_vwap_pct": intraday_risk.get("close_vs_vwap_pct", 0) if intraday_risk else 0,
-                "volume_spike": intraday_risk.get("volume_spike", 0) if intraday_risk else 0,
-                "today_vwap": intraday_risk.get("today_vwap", 0) if intraday_risk else 0,
-            }
+            # Store in cache (thread-safe)
+            with self._dist_risk_lock:
+                self._distribution_risk_cache[symbol] = {
+                    "avg_cost": round(broker_avg_cost, 2),
+                    "avg_cost_1w": round(broker_avg_cost_1w, 2) if broker_avg_cost_1w else None,
+                    "profit_pct": round(broker_profit_pct, 2),
+                    "risk_level": distribution_risk,
+                    "warning": warning,
+                    "penalty": penalty,
+                    "is_seller_dominant": is_seller_dominant,
+                    "seller_weight": seller_weight,
+                    "lookback_days": lookback_used,
+                    "calculation_method": calculation_method,
+                    "net_holdings_1m": net_holdings_1m,
+                    "net_holdings_1w": net_holdings_1w,
+                    "distribution_divergence": distribution_divergence,
+                    "intraday_dump_detected": intraday_risk.get("dump_detected", False) if intraday_risk else False,
+                    "open_price": intraday_risk.get("open_price", 0) if intraday_risk else 0,
+                    "open_vs_broker_pct": intraday_risk.get("open_vs_broker_pct", 0) if intraday_risk else 0,
+                    "close_vs_vwap_pct": intraday_risk.get("close_vs_vwap_pct", 0) if intraday_risk else 0,
+                    "volume_spike": intraday_risk.get("volume_spike", 0) if intraday_risk else 0,
+                    "today_vwap": intraday_risk.get("today_vwap", 0) if intraday_risk else 0,
+                }
             
             logger.debug(f"{symbol}: Distribution Risk = {distribution_risk} (Profit: {broker_profit_pct:.1f}%, Method: {calculation_method})")
             

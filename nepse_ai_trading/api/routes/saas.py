@@ -34,11 +34,11 @@ from concurrent.futures import ThreadPoolExecutor
 # /portfolio/status, etc.) because Python's GIL + network-bound NEPSE calls
 # hog every worker.  With its own pool, scans run in parallel *without*
 # blocking the rest of the API.
-_SCAN_POOL = ThreadPoolExecutor(max_workers=50, thread_name_prefix="scan")
+_SCAN_POOL = ThreadPoolExecutor(max_workers=15, thread_name_prefix="scan")
 
 # Background job store for long-running scans (Stealth full scan)
 _stealth_jobs: Dict[str, Dict[str, Any]] = {}
-_stealth_executor = ThreadPoolExecutor(max_workers=50)  # one full scan at a time
+_stealth_executor = ThreadPoolExecutor(max_workers=15)  # one full scan at a time
 
 # ── Scan result cache ───────────────────────────────────────────────────
 # Caches scan/stealth results so 100+ concurrent users don't each trigger
@@ -727,7 +727,7 @@ async def run_market_scan(
             )
             regime, regime_reason = screener.check_market_regime()
             results = screener.run_full_analysis(
-                quick_mode=quick, max_workers=50, cancel_event=cancel_event
+                quick_mode=quick, max_workers=15, cancel_event=cancel_event
             )
             return regime, results
 
@@ -890,7 +890,7 @@ def _run_stealth_job(job_id: str, sector: Optional[str], max_price: Optional[flo
         cancel_event = _stealth_jobs[job_id].get("cancel_event")
         screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
         results = screener.run_full_analysis(
-            quick_mode=quick, max_workers=50, cancel_event=cancel_event
+            quick_mode=quick, max_workers=15, cancel_event=cancel_event
         )
         
         # Check if cancelled before storing results
@@ -950,7 +950,7 @@ async def run_stealth_scan(
             def _do_quick_stealth():
                 screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
                 results = screener.run_full_analysis(
-                    quick_mode=True, max_workers=50, cancel_event=cancel_event
+                    quick_mode=True, max_workers=15, cancel_event=cancel_event
                 )
                 return _build_stealth_response(results)
 
