@@ -3093,7 +3093,17 @@ async def get_broker_intelligence():
                 symbol = str(row.get("symbol", "")).upper()
                 if not symbol:
                     continue
-                change_pct = _to_float(row.get("percentChange", row.get("changePercent", 0)))
+                
+                # Calculate change percentage - use close vs open if API doesn't provide it
+                change_pct = _to_float(row.get("percentChange", row.get("changePercent", None)))
+                if change_pct is None or change_pct == 0:
+                    open_price = _to_float(row.get('open', 0))
+                    close_price = _to_float(row.get('close', 0))
+                    if open_price and open_price > 0:
+                        change_pct = ((close_price - open_price) / open_price) * 100
+                    else:
+                        change_pct = 0
+                
                 volume = int(_to_float(row.get("volume", row.get("totalTradedQuantity", 0))))
                 report_stocks.append({
                     "symbol": symbol,

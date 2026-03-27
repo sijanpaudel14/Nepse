@@ -12,7 +12,6 @@ import {
   Target,
   AlertTriangle,
   ChevronRight,
-,
   RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
