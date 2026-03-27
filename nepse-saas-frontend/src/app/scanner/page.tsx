@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { runScan, addToPortfolio, type StockScanResult } from '@/lib/api';
+import { runScan, addToPortfolio, stopScan, type StockScanResult } from '@/lib/api';
 import { 
   Search, 
   Zap, 
@@ -410,20 +410,24 @@ export default function ScannerPage() {
   };
 
   const handleStopScan = () => {
+    // 1. Abort the frontend fetch
     if (scanAbortRef.current) {
       scanAbortRef.current.abort();
       scanAbortRef.current = null;
-      setIsScanRunning(false);
-      if (typeof window !== 'undefined') {
-        window.localStorage.removeItem('nepse-scan-running-v1');
-      }
-      setBuyFeedback({
-        symbol: '',
-        success: false,
-        message: 'Scan stopped by user.',
-      });
-      setTimeout(() => setBuyFeedback(null), 3000);
     }
+    // 2. Tell backend to stop the scan thread
+    stopScan().catch(() => {/* ignore errors */});
+    // 3. Reset UI state
+    setIsScanRunning(false);
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('nepse-scan-running-v1');
+    }
+    setBuyFeedback({
+      symbol: '',
+      success: false,
+      message: 'Scan stopped by user.',
+    });
+    setTimeout(() => setBuyFeedback(null), 3000);
   };
 
   useEffect(() => {

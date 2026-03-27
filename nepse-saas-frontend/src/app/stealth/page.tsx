@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { runStealthScan, pollStealthJob, type SectorRotation, type StealthStock, type StealthResponse } from '@/lib/api';
+import { runStealthScan, pollStealthJob, stopStealthScan, type SectorRotation, type StealthStock, type StealthResponse } from '@/lib/api';
 import { 
   Radar,
   Loader2,
@@ -290,6 +290,14 @@ export default function StealthPage() {
         setJobProgress(`Scan failed: ${status.error}`);
         // Clear scan state on error
         try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* quota */ }
+      } else if (status.status === 'cancelled') {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        setIsStealthRunning(false);
+        setJobId(null);
+        setJobProgress('Scan stopped by user.');
+        try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* quota */ }
+        setTimeout(() => setJobProgress(''), 3000);
       } else {
         setJobProgress(status.status === 'running' ? 'Analyzing stocks... (this takes 5-10 min for full scan)' : 'Queued...');
       }
@@ -375,11 +383,23 @@ export default function StealthPage() {
   };
 
   const handleStop = () => {
+    // 1. Stop frontend polling
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     pollIntervalRef.current = null;
+    // 2. Tell backend to cancel the job
+    if (jobId) {
+      stopStealthScan(jobId).catch(() => {/* ignore */});
+    } else {
+      // Quick mode or unknown — stop all running stealth scans
+      stopStealthScan().catch(() => {/* ignore */});
+    }
+    // 3. Reset UI state
     setIsStealthRunning(false);
     setJobId(null);
-    setJobProgress('');
+    setJobProgress('Scan stopped by user.');
+    // Clear persisted scan state
+    try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* ignore */ }
+    setTimeout(() => setJobProgress(''), 3000);
   };
 
   return (

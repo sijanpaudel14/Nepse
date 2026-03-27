@@ -714,6 +714,7 @@ class MasterStockScreener:
         include_rejected: bool = False,
         quick_mode: bool = False,
         max_workers: int = 50,
+        cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """
         🚀 Run the complete 4-Pillar analysis on ALL NEPSE stocks.
@@ -728,6 +729,7 @@ class MasterStockScreener:
             include_rejected: Whether to include rejected stocks (for debugging)
             quick_mode: If True, only analyze top 50 stocks by volume (5x faster)
             max_workers: Number of parallel threads for analysis
+            cancel_event: If set, check this event between stocks to support early stop
         
         Returns:
             List of ScreenedStock objects, ranked by total_score
@@ -790,8 +792,18 @@ class MasterStockScreener:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(self._score_stock_parallel, stock): stock for stock in stocks}
             completed = 0
+            cancelled = False
             
             for future in as_completed(futures):
+                # Check cancel flag between stock completions
+                if cancel_event and cancel_event.is_set():
+                    logger.warning("🛑 Scan CANCELLED by user — stopping early")
+                    cancelled = True
+                    # Cancel remaining futures
+                    for f in futures:
+                        f.cancel()
+                    break
+                
                 completed += 1
                 screened = future.result()
                 
@@ -805,6 +817,9 @@ class MasterStockScreener:
                 # Progress logging every 50 stocks
                 if completed % 50 == 0:
                     logger.info(f"   Analyzed {completed}/{len(stocks)} stocks...")
+            
+            if cancelled:
+                executor.shutdown(wait=False, cancel_futures=True)
         
         # Legacy sequential processing (fallback)
         # for i, stock in enumerate(stocks):
@@ -843,6 +858,7 @@ class MasterStockScreener:
         self,
         top_n: int = 500,
         max_workers: int = 50,
+        cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """
         🕵️ STEALTH RADAR MODE - Detect Smart Money Accumulation
@@ -886,8 +902,16 @@ class MasterStockScreener:
             futures = {executor.submit(self._score_stock_parallel, stock): stock for stock in stocks}
             completed = 0
             errors = 0
+            cancelled = False
             
             for future in as_completed(futures):
+                if cancel_event and cancel_event.is_set():
+                    logger.warning("🛑 Stealth scan CANCELLED by user — stopping early")
+                    cancelled = True
+                    for f in futures:
+                        f.cancel()
+                    break
+                
                 completed += 1
                 try:
                     screened = future.result()
@@ -900,6 +924,9 @@ class MasterStockScreener:
                 
                 if completed % 100 == 0:
                     logger.info(f"   Stealth analyzed {completed}/{len(stocks)} stocks...")
+            
+            if cancelled:
+                executor.shutdown(wait=False, cancel_futures=True)
         
         logger.info("=" * 70)
         logger.info(f"✅ Stealth analysis complete: {len(results)} stocks scored")

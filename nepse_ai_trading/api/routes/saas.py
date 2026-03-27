@@ -80,6 +80,11 @@ router = APIRouter(prefix="/api", tags=["SaaS"])
 _ANALYZE_CANCEL_FLAGS: Dict[str, bool] = {}
 _ANALYZE_LOCK = threading.Lock()
 
+# ── Scan cancellation support ────────────────────────────────────────────
+# Allows the frontend Stop button to actually halt a running scan/stealth job.
+_active_scan_cancel: Optional[threading.Event] = None  # For the /scan endpoint
+_active_scan_lock = threading.Lock()
+
 
 def _normalize_company_list(company_list: Any) -> List[Dict[str, Any]]:
     """
@@ -709,6 +714,11 @@ async def run_market_scan(
     try:
         logger.info(f"API Scan: strategy={strategy}, sector={sector}, quick={quick}")
 
+        cancel_event = threading.Event()
+        with _active_scan_lock:
+            global _active_scan_cancel
+            _active_scan_cancel = cancel_event
+
         def _do_scan():
             screener = MasterStockScreener(
                 strategy=strategy,
@@ -716,7 +726,9 @@ async def run_market_scan(
                 max_price=max_price
             )
             regime, regime_reason = screener.check_market_regime()
-            results = screener.run_full_analysis(quick_mode=quick, max_workers=50)
+            results = screener.run_full_analysis(
+                quick_mode=quick, max_workers=50, cancel_event=cancel_event
+            )
             return regime, results
 
         loop = asyncio.get_event_loop()
@@ -724,6 +736,9 @@ async def run_market_scan(
             loop.run_in_executor(_SCAN_POOL, _do_scan),
             timeout=180.0,
         )
+        
+        with _active_scan_lock:
+            _active_scan_cancel = None
         regime_emoji = ""
         
         # Convert to response format
@@ -795,6 +810,19 @@ async def run_market_scan(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/scan/stop")
+async def stop_market_scan():
+    """Stop the currently running AI Scanner scan."""
+    with _active_scan_lock:
+        global _active_scan_cancel
+        if _active_scan_cancel is not None:
+            _active_scan_cancel.set()
+            _active_scan_cancel = None
+            logger.info("🛑 AI Scanner scan stop requested by user")
+            return {"success": True, "message": "Scan stop signal sent."}
+    return {"success": True, "message": "No active scan to stop."}
+
+
 def _build_stealth_response(results) -> StealthResponse:
     """Convert screener results to StealthResponse (shared by sync + async paths)."""
     logger.info(f"_build_stealth_response: received {len(results)} stocks from screener")
@@ -859,8 +887,21 @@ def _run_stealth_job(job_id: str, sector: Optional[str], max_price: Optional[flo
     """Background worker — runs in dedicated scan thread pool."""
     try:
         _stealth_jobs[job_id]["status"] = "running"
+        cancel_event = _stealth_jobs[job_id].get("cancel_event")
         screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
-        results = screener.run_full_analysis(quick_mode=quick, max_workers=50)
+        results = screener.run_full_analysis(
+            quick_mode=quick, max_workers=50, cancel_event=cancel_event
+        )
+        
+        # Check if cancelled before storing results
+        if cancel_event and cancel_event.is_set():
+            _stealth_jobs[job_id] = {
+                "status": "cancelled",
+                "message": "Scan stopped by user.",
+            }
+            logger.info(f"Stealth job {job_id} cancelled by user")
+            return
+        
         response = _build_stealth_response(results)
         resp_dict = response.dict()
         _stealth_jobs[job_id] = {
@@ -904,22 +945,44 @@ async def run_stealth_scan(
 
         if quick:
             # Quick mode: run in dedicated pool so event loop stays free
+            cancel_event = threading.Event()
+            
             def _do_quick_stealth():
                 screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
-                results = screener.run_full_analysis(quick_mode=True, max_workers=50)
+                results = screener.run_full_analysis(
+                    quick_mode=True, max_workers=50, cancel_event=cancel_event
+                )
                 return _build_stealth_response(results)
 
-            loop = asyncio.get_event_loop()
-            response = await asyncio.wait_for(
-                loop.run_in_executor(_SCAN_POOL, _do_quick_stealth),
-                timeout=120.0,
-            )
-            _set_scan_cache(cache_key, response)
-            return response
+            # Store the cancel event so /stealth-scan/stop can find it
+            quick_job_id = f"quick-{uuid.uuid4().hex[:6]}"
+            _stealth_jobs[quick_job_id] = {
+                "status": "running",
+                "cancel_event": cancel_event,
+                "started_at": datetime.now().isoformat(),
+            }
+            
+            try:
+                loop = asyncio.get_event_loop()
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(_SCAN_POOL, _do_quick_stealth),
+                    timeout=120.0,
+                )
+                _set_scan_cache(cache_key, response)
+                # Cleanup quick job entry
+                _stealth_jobs.pop(quick_job_id, None)
+                return response
+            finally:
+                _stealth_jobs.pop(quick_job_id, None)
         else:
             # Full mode: 5-10 min — run in background, return job_id immediately
             job_id = uuid.uuid4().hex[:10]
-            _stealth_jobs[job_id] = {"status": "pending", "started_at": datetime.now().isoformat()}
+            cancel_event = threading.Event()
+            _stealth_jobs[job_id] = {
+                "status": "pending",
+                "started_at": datetime.now().isoformat(),
+                "cancel_event": cancel_event,
+            }
             _stealth_executor.submit(_run_stealth_job, job_id, sector, max_price, False)
             logger.info(f"Stealth full scan started as background job {job_id}")
             return {"success": True, "status": "pending", "job_id": job_id,
@@ -934,11 +997,39 @@ async def run_stealth_scan(
 
 @router.get("/stealth-scan/status/{job_id}")
 async def get_stealth_job_status(job_id: str):
-    """Poll background stealth scan job. Returns status: pending|running|done|error."""
+    """Poll background stealth scan job. Returns status: pending|running|done|error|cancelled."""
     job = _stealth_jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found. It may have expired.")
-    return job
+    # Return a copy without non-serializable fields (cancel_event)
+    return {k: v for k, v in job.items() if k != "cancel_event"}
+
+
+@router.post("/stealth-scan/stop/{job_id}")
+async def stop_stealth_scan(job_id: str):
+    """Stop a running stealth scan background job."""
+    job = _stealth_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+    cancel_event = job.get("cancel_event")
+    if cancel_event and not cancel_event.is_set():
+        cancel_event.set()
+        logger.info(f"🛑 Stealth job {job_id} stop requested by user")
+        return {"success": True, "message": f"Stop signal sent to job {job_id}."}
+    return {"success": True, "message": "Job already completed or cancelled."}
+
+
+@router.post("/stealth-scan/stop")
+async def stop_all_stealth_scans():
+    """Stop ALL running stealth scans (quick and full)."""
+    stopped = 0
+    for job_id, job in _stealth_jobs.items():
+        cancel_event = job.get("cancel_event")
+        if cancel_event and not cancel_event.is_set():
+            cancel_event.set()
+            stopped += 1
+    logger.info(f"🛑 Stopped {stopped} stealth scans by user request")
+    return {"success": True, "message": f"Stopped {stopped} running scan(s)."}
 
 
 

@@ -99,6 +99,18 @@ export async function pollStealthJob(jobId: string): Promise<StealthJobStatus> {
   return fetchAPI<StealthJobStatus>(`/api/stealth-scan/status/${jobId}`);
 }
 
+// Stop running scans
+export async function stopScan(): Promise<{ success: boolean; message: string }> {
+  return fetchAPI('/api/scan/stop', { method: 'POST' });
+}
+
+export async function stopStealthScan(jobId?: string): Promise<{ success: boolean; message: string }> {
+  if (jobId) {
+    return fetchAPI(`/api/stealth-scan/stop/${jobId}`, { method: 'POST' });
+  }
+  return fetchAPI('/api/stealth-scan/stop', { method: 'POST' });
+}
+
 // Market Regime
 export async function getMarketRegime(signal?: AbortSignal) {
   return fetchAPI<MarketRegimeResponse>('/api/market-regime', { signal });
@@ -332,7 +344,7 @@ export interface StealthJobPending {
 }
 
 export interface StealthJobStatus {
-  status: 'pending' | 'running' | 'done' | 'error';
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled';
   started_at?: string;
   completed_at?: string;
   result?: StealthResponse;
