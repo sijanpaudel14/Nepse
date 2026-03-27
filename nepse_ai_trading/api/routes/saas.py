@@ -824,27 +824,31 @@ async def stop_market_scan():
 
 
 def _build_stealth_response(results) -> StealthResponse:
-    """Convert screener results to StealthResponse (shared by sync + async paths)."""
+    """Convert screener results to StealthResponse (shared by sync + async paths).
+    
+    Thresholds mirror paper_trader.py CLI logic:
+      - Broker Score > 80% of max 30 = > 24 pts  (heavy accumulation)
+      - Technical Score < 40% of max 30 = < 12 pts (price not broken out yet)
+      - Distribution Risk must NOT be HIGH or CRITICAL
+    """
     logger.info(f"_build_stealth_response: received {len(results)} stocks from screener")
     stealth_stocks = []
     filtered_count = 0
+
+    MAX_PILLAR = 30.0
+    BROKER_THRESHOLD = MAX_PILLAR * 0.80   # > 24 — heavy institutional accumulation
+    TECH_THRESHOLD = MAX_PILLAR * 0.40     # < 12 — price hasn't broken out yet
+
     for stock in results:
         tech_score = stock.pillar4_technical
         broker_score = stock.pillar1_broker
         dist_risk = getattr(stock, 'distribution_risk', '') or ''
 
-        # Correct max values: both pillars max at 30
-        MAX_PILLAR = 30.0
-        tech_pct = (tech_score / MAX_PILLAR) * 100 if MAX_PILLAR > 0 else 0
-        broker_pct = (broker_score / MAX_PILLAR) * 100 if MAX_PILLAR > 0 else 0
+        tech_pct = (tech_score / MAX_PILLAR) * 100
+        broker_pct = (broker_score / MAX_PILLAR) * 100
 
-        # Stealth criteria (Nepal market context):
-        # - Technically weak (< 60%) = price hasn't formed strong breakout yet → accumulation zone
-        # - Strong broker buying (> 50%) = institutional interest
-        # - Not being actively distributed (exclude HIGH / CRITICAL sellers)
-        # - Empty dist_risk means broker data unavailable → still include if broker score strong
-        is_distributing = dist_risk in ("HIGH", "CRITICAL")
-        if tech_pct < 60 and broker_pct > 50 and not is_distributing:
+        is_distributing = dist_risk.upper() in ("HIGH", "CRITICAL")
+        if tech_score < TECH_THRESHOLD and broker_score > BROKER_THRESHOLD and not is_distributing:
             stealth_stocks.append(StealthStock(
                 symbol=stock.symbol,
                 sector=stock.sector,
@@ -888,9 +892,11 @@ def _run_stealth_job(job_id: str, sector: Optional[str], max_price: Optional[flo
     try:
         _stealth_jobs[job_id]["status"] = "running"
         cancel_event = _stealth_jobs[job_id].get("cancel_event")
-        screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
-        results = screener.run_full_analysis(
-            quick_mode=quick, max_workers=15, cancel_event=cancel_event
+        screener = MasterStockScreener(strategy="value", target_sector=sector, max_price=max_price)
+        # Use dedicated stealth method: bypasses turnover filter so low-volume
+        # accumulation stocks (the entire point of stealth scan) are not skipped
+        results = screener.run_stealth_analysis(
+            max_workers=15, cancel_event=cancel_event
         )
         
         # Check if cancelled before storing results
@@ -944,13 +950,16 @@ async def run_stealth_scan(
         logger.info(f"API Stealth Scan: sector={sector}, quick={quick}")
 
         if quick:
-            # Quick mode: run in dedicated pool so event loop stays free
+            # Quick mode: uses run_stealth_analysis() which bypasses turnover filter
+            # (low-volume accumulation stocks would be skipped by quick_mode=True)
             cancel_event = threading.Event()
             
             def _do_quick_stealth():
-                screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
-                results = screener.run_full_analysis(
-                    quick_mode=True, max_workers=15, cancel_event=cancel_event
+                screener = MasterStockScreener(strategy="value", target_sector=sector, max_price=max_price)
+                # run_stealth_analysis() is the dedicated stealth method: bypasses turnover
+                # filter and scores ALL stocks, so low-volume accumulation is NOT missed
+                results = screener.run_stealth_analysis(
+                    max_workers=15, cancel_event=cancel_event
                 )
                 return _build_stealth_response(results)
 
@@ -966,11 +975,9 @@ async def run_stealth_scan(
                 loop = asyncio.get_event_loop()
                 response = await asyncio.wait_for(
                     loop.run_in_executor(_SCAN_POOL, _do_quick_stealth),
-                    timeout=120.0,
+                    timeout=220.0,
                 )
                 _set_scan_cache(cache_key, response)
-                # Cleanup quick job entry
-                _stealth_jobs.pop(quick_job_id, None)
                 return response
             finally:
                 _stealth_jobs.pop(quick_job_id, None)
@@ -988,7 +995,7 @@ async def run_stealth_scan(
             return {"success": True, "status": "pending", "job_id": job_id,
                     "message": "Full scan started. Poll /api/stealth-scan/status/{job_id} every 5s."}
     except asyncio.TimeoutError:
-        logger.error("Stealth quick scan timed out after 120s")
+        logger.error("Stealth quick scan timed out after 220s")
         raise HTTPException(status_code=504, detail="Stealth scan timed out. NEPSE API may be slow. Try again.")
     except Exception as e:
         logger.error(f"Stealth scan failed: {e}")
