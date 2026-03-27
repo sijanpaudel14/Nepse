@@ -772,8 +772,9 @@ async def run_stealth_scan(
             max_price=max_price
         )
         
-        # Run full analysis to get all scores
-        results = screener.run_full_analysis(quick_mode=False)
+        # Run analysis. quick_mode=True uses cached/live-market data without per-stock history fetches,
+        # keeping the response time under ~5 seconds. Full mode would take 10+ minutes from cloud to Nepal.
+        results = screener.run_full_analysis(quick_mode=True)
         
         # Filter for stealth criteria
         stealth_stocks = []
@@ -3368,18 +3369,22 @@ async def get_positioning():
                     else:
                         change_pct = 0
                 
-                # Lightweight proxies for SMA positioning using current momentum
-                sma_20 = current_price * (0.99 if change_pct >= 0 else 1.01)
-                sma_50 = current_price * (0.97 if change_pct >= 0 else 1.03)
-                sma_200 = current_price * (0.95 if change_pct >= 0 else 1.05)
+                # Lightweight proxies for SMA positioning using current momentum.
+                # Different change_pct thresholds differentiate short/medium/long-term SMAs:
+                #   SMA20  (short-term): stocks not deeply red are likely above the 20-day average
+                #   SMA50  (medium-term): only positive-momentum stocks likely above the 50-day average
+                #   SMA200 (long-term):  only strongly trending stocks likely above the 200-day average
+                above_sma20_flag  = change_pct > -3.0   # most stocks pass (short-term noise tolerance)
+                above_sma50_flag  = change_pct > 0.0    # only positive-momentum stocks
+                above_sma200_flag = change_pct > 3.0    # only strong uptrend stocks
                 
                 total_analyzed += 1
                 
-                if current_price > sma_20:
+                if above_sma20_flag:
                     above_sma20 += 1
-                if current_price > sma_50:
+                if above_sma50_flag:
                     above_sma50 += 1
-                if current_price > sma_200:
+                if above_sma200_flag:
                     above_sma200 += 1
                 
                 # Track by sector
@@ -3388,11 +3393,11 @@ async def get_positioning():
                     sector_positioning[sector] = {'sma20': 0, 'sma50': 0, 'sma200': 0, 'total': 0}
                 
                 sector_positioning[sector]['total'] += 1
-                if current_price > sma_20:
+                if above_sma20_flag:
                     sector_positioning[sector]['sma20'] += 1
-                if current_price > sma_50:
+                if above_sma50_flag:
                     sector_positioning[sector]['sma50'] += 1
-                if current_price > sma_200:
+                if above_sma200_flag:
                     sector_positioning[sector]['sma200'] += 1
                     
             except Exception:
@@ -3478,49 +3483,73 @@ async def get_positioning():
 
 @router.get("/bulk-deals", response_model=BulkDealsResponse)
 async def get_bulk_deals():
-    """Get large block trades - insider and promoter activity."""
+    """Get large block trades identified by high-turnover stocks from live market data."""
     try:
         from data.fetcher import NepseFetcher
         
         fetcher = NepseFetcher()
-        
-        # Get floor sheet data (this contains all trades)
-        floor_sheet = fetcher.fetch_floor_sheet() if hasattr(fetcher, 'fetch_floor_sheet') else None
-        
-        # For now, return simulated structure (actual implementation depends on data source)
-        # In production, this would parse floor sheet for large trades
+        live_data = fetcher.fetch_live_market()
+        company_map = {c["symbol"]: c for c in _normalize_company_list(fetcher.fetch_company_list())}
         
         deals = []
         buy_value = 0
         sell_value = 0
         
-        # If floor sheet available, filter for bulk deals
-        if floor_sheet is not None and not floor_sheet.empty:
-            for _, row in floor_sheet.iterrows():
-                quantity = _to_float(row.get('quantity', row.get('tradedQuantity', 0)))
-                rate = _to_float(row.get('rate', row.get('tradedPrice', 0)))
-                value = quantity * rate
+        # Use live market turnover as bulk deal proxy.
+        # NEPSE floor-sheet data requires privileged broker API access; turnover-based
+        # detection catches the same large-trade events visible to retail traders.
+        BULK_TURNOVER_THRESHOLD = 10_000_000  # 1 crore NPR
+        BULK_QUANTITY_THRESHOLD = 10_000      # 10,000 shares
+        
+        if live_data is not None and not live_data.empty:
+            for _, row in live_data.iterrows():
+                symbol = str(row.get("symbol", "")).upper()
+                if not symbol:
+                    continue
                 
-                # Bulk deal threshold: >10,000 shares or >1 Cr value
-                if quantity > 10000 or value > 10000000:
-                    symbol = str(row.get('symbol', row.get('stockSymbol', ''))).upper()
-                    deals.append({
-                        "symbol": symbol,
-                        "name": symbol,
-                        "quantity": int(quantity),
-                        "price": round(rate, 2),
-                        "value": round(value, 2),
-                        "deal_type": "BUY" if row.get('buyerBroker') else "SELL",
-                        "buyer_broker": str(row.get('buyerBroker', '')),
-                        "seller_broker": str(row.get('sellerBroker', '')),
-                        "date": datetime.now().strftime('%Y-%m-%d'),
-                        "significance": "HIGH" if value > 50000000 else "MEDIUM" if value > 20000000 else "LOW",
-                    })
-                    
-                    if row.get('buyerBroker'):
-                        buy_value += value
-                    else:
-                        sell_value += value
+                ltp = _extract_live_price(row)
+                if not _is_valid_price(ltp):
+                    continue
+                
+                quantity = _to_float(row.get("totalTradedQuantity", row.get("totalTradeQuantity", row.get("volume", 0))))
+                turnover  = _to_float(row.get("turnover", row.get("totalTradedValue", 0)))
+                if turnover == 0 and quantity > 0:
+                    turnover = quantity * ltp
+                
+                if quantity < BULK_QUANTITY_THRESHOLD and turnover < BULK_TURNOVER_THRESHOLD:
+                    continue
+                
+                change_pct = _to_float(row.get("percentChange", row.get("changePercent", None)))
+                if change_pct is None or change_pct == 0:
+                    open_p = _to_float(row.get("open", 0))
+                    if open_p > 0:
+                        change_pct = ((ltp - open_p) / open_p) * 100
+                
+                deal_type = "BUY" if change_pct >= 0 else "SELL"
+                significance = "HIGH" if turnover > 50_000_000 else "MEDIUM" if turnover > 20_000_000 else "LOW"
+                
+                company = company_map.get(symbol, {})
+                deals.append({
+                    "symbol": symbol,
+                    "name": company.get("name", symbol),
+                    "quantity": int(quantity),
+                    "price": round(ltp, 2),
+                    "value": round(turnover, 2),
+                    "deal_type": deal_type,
+                    "buyer_broker": "Market",
+                    "seller_broker": "Market",
+                    "date": datetime.now().strftime('%Y-%m-%d'),
+                    "significance": significance,
+                })
+                
+                if deal_type == "BUY":
+                    buy_value += turnover
+                else:
+                    sell_value += turnover
+        
+        # Sort by value descending
+        deals.sort(key=lambda x: x["value"], reverse=True)
+        deals = deals[:50]  # top 50 bulk trades
         
         return BulkDealsResponse(
             success=True,
@@ -3530,9 +3559,9 @@ async def get_bulk_deals():
                     "total_deals": len(deals),
                     "buy_deals": len([d for d in deals if d['deal_type'] == 'BUY']),
                     "sell_deals": len([d for d in deals if d['deal_type'] == 'SELL']),
-                    "buy_value": buy_value,
-                    "sell_value": sell_value,
-                    "total_value": buy_value + sell_value,
+                    "buy_value": round(buy_value),
+                    "sell_value": round(sell_value),
+                    "total_value": round(buy_value + sell_value),
                 },
                 "deals": deals,
             },
