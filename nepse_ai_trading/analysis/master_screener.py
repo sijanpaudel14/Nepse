@@ -661,7 +661,7 @@ class MasterStockScreener:
         top_n: int = 10,
         include_rejected: bool = False,
         quick_mode: bool = False,
-        max_workers: int = 10,
+        max_workers: int = 50,
     ) -> List[ScreenedStock]:
         """
         🚀 Run the complete 4-Pillar analysis on ALL NEPSE stocks.
@@ -798,7 +798,7 @@ class MasterStockScreener:
     def run_stealth_analysis(
         self,
         top_n: int = 500,
-        max_workers: int = 8,
+        max_workers: int = 50,
     ) -> List[ScreenedStock]:
         """
         🕵️ STEALTH RADAR MODE - Detect Smart Money Accumulation

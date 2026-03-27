@@ -58,7 +58,7 @@ class StockScreener:
     def __init__(
         self, 
         strategies: List[Type[BaseStrategy]] = None,
-        max_workers: int = 4,
+        max_workers: int = 50,
     ):
         """
         Initialize screener.

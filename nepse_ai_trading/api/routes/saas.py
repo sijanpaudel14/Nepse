@@ -25,11 +25,40 @@ import threading
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 import uuid
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+# ── Isolated scan executor ──────────────────────────────────────────────
+# A DEDICATED thread-pool for heavy scan work.  Running scans inside the
+# default asyncio executor would starve lightweight endpoints (/market-regime,
+# /portfolio/status, etc.) because Python's GIL + network-bound NEPSE calls
+# hog every worker.  With its own pool, scans run in parallel *without*
+# blocking the rest of the API.
+_SCAN_POOL = ThreadPoolExecutor(max_workers=50, thread_name_prefix="scan")
 
 # Background job store for long-running scans (Stealth full scan)
 _stealth_jobs: Dict[str, Dict[str, Any]] = {}
-_stealth_executor = ThreadPoolExecutor(max_workers=1)  # one full scan at a time
+_stealth_executor = ThreadPoolExecutor(max_workers=50)  # one full scan at a time
+
+# ── Scan result cache ───────────────────────────────────────────────────
+# Caches scan/stealth results so 100+ concurrent users don't each trigger
+# a fresh 300-stock scan.  TTL = 5 min (NEPSE data only changes once/day).
+_scan_cache: Dict[str, Dict[str, Any]] = {}
+_SCAN_CACHE_TTL = 300  # 5 minutes
+
+def _get_scan_cache(key: str) -> Optional[Any]:
+    """Return cached scan result if still fresh, else None."""
+    entry = _scan_cache.get(key)
+    if entry is None:
+        return None
+    age = (datetime.now() - entry["ts"]).total_seconds()
+    if age < _SCAN_CACHE_TTL:
+        logger.info(f"📦 Scan cache HIT for '{key}' (age {age:.0f}s)")
+        return entry["data"]
+    return None
+
+def _set_scan_cache(key: str, data: Any):
+    _scan_cache[key] = {"data": data, "ts": datetime.now()}
 
 
 def _is_nepse_trading_day(dt: datetime | None = None) -> bool:
@@ -669,25 +698,33 @@ async def run_market_scan(
     Run the 4-Pillar AI Market Scanner.
     
     Returns top stocks based on the selected strategy.
+    Non-blocking: runs in a dedicated thread pool so other endpoints stay responsive.
+    Results are cached for 5 minutes so concurrent users get instant responses.
     """
+    cache_key = f"scan:{strategy}:{sector}:{quick}:{max_price}:{limit}"
+    cached = _get_scan_cache(cache_key)
+    if cached is not None:
+        return cached
+
     try:
-        from analysis.master_screener import MasterStockScreener
-        
         logger.info(f"API Scan: strategy={strategy}, sector={sector}, quick={quick}")
-        
-        # Initialize screener
-        screener = MasterStockScreener(
-            strategy=strategy,
-            target_sector=sector,
-            max_price=max_price
+
+        def _do_scan():
+            screener = MasterStockScreener(
+                strategy=strategy,
+                target_sector=sector,
+                max_price=max_price
+            )
+            regime, regime_reason = screener.check_market_regime()
+            results = screener.run_full_analysis(quick_mode=quick, max_workers=50)
+            return regime, results
+
+        loop = asyncio.get_event_loop()
+        regime, results = await asyncio.wait_for(
+            loop.run_in_executor(_SCAN_POOL, _do_scan),
+            timeout=180.0,
         )
-        
-        # Check market regime
-        regime, regime_reason = screener.check_market_regime()
         regime_emoji = ""
-        
-        # Run analysis
-        results = screener.run_full_analysis(quick_mode=quick)
         
         # Convert to response format
         scan_results = []
@@ -737,7 +774,7 @@ async def run_market_scan(
                 red_flags=getattr(stock, 'red_flags', []),
             ))
         
-        return ScanResponse(
+        response = ScanResponse(
             success=True,
             timestamp=datetime.now().isoformat(),
             market_regime=regime,
@@ -747,7 +784,12 @@ async def run_market_scan(
             total_analyzed=len(results),
             results=scan_results,
         )
+        _set_scan_cache(cache_key, response)
+        return response
         
+    except asyncio.TimeoutError:
+        logger.error("Scan timed out after 180s")
+        raise HTTPException(status_code=504, detail="Scan timed out. NEPSE API may be slow. Try again.")
     except Exception as e:
         logger.error(f"Scan failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -814,18 +856,21 @@ def _build_stealth_response(results) -> StealthResponse:
 
 
 def _run_stealth_job(job_id: str, sector: Optional[str], max_price: Optional[float], quick: bool):
-    """Background worker — runs in thread pool executor."""
+    """Background worker — runs in dedicated scan thread pool."""
     try:
-        from analysis.master_screener import MasterStockScreener
         _stealth_jobs[job_id]["status"] = "running"
         screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
-        results = screener.run_full_analysis(quick_mode=quick)
+        results = screener.run_full_analysis(quick_mode=quick, max_workers=50)
         response = _build_stealth_response(results)
+        resp_dict = response.dict()
         _stealth_jobs[job_id] = {
             "status": "done",
-            "result": response.dict(),
+            "result": resp_dict,
             "completed_at": datetime.now().isoformat(),
         }
+        # Cache the result so other users get it instantly
+        cache_key = f"stealth:{sector}:{max_price}:{quick}"
+        _set_scan_cache(cache_key, response)
         logger.info(f"Stealth job {job_id} done: {response.total_stealth_stocks} stocks found")
     except Exception as e:
         logger.error(f"Stealth job {job_id} failed: {e}")
@@ -840,19 +885,37 @@ async def run_stealth_scan(
 ):
     """
     Stealth Radar - Detect Smart Money Accumulation.
-    quick=True  → returns results immediately (fast, less precise).
+    
+    Both quick and full modes are NON-BLOCKING — they run in a dedicated
+    thread pool so other API endpoints (/market-regime, /portfolio, etc.)
+    stay responsive.  Results are cached for 5 minutes.
+    
+    quick=True  → runs in ~30s via dedicated thread pool, returns results.
     quick=False → starts background job, returns {job_id, status:'pending'}.
                   Poll /api/stealth-scan/status/{job_id} every 5s for results.
     """
     try:
-        from analysis.master_screener import MasterStockScreener
+        cache_key = f"stealth:{sector}:{max_price}:{quick}"
+        cached = _get_scan_cache(cache_key)
+        if cached is not None:
+            return cached
+
         logger.info(f"API Stealth Scan: sector={sector}, quick={quick}")
 
         if quick:
-            # Quick mode: runs in ~30s, safe to do synchronously
-            screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
-            results = screener.run_full_analysis(quick_mode=True)
-            return _build_stealth_response(results)
+            # Quick mode: run in dedicated pool so event loop stays free
+            def _do_quick_stealth():
+                screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
+                results = screener.run_full_analysis(quick_mode=True, max_workers=50)
+                return _build_stealth_response(results)
+
+            loop = asyncio.get_event_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(_SCAN_POOL, _do_quick_stealth),
+                timeout=120.0,
+            )
+            _set_scan_cache(cache_key, response)
+            return response
         else:
             # Full mode: 5-10 min — run in background, return job_id immediately
             job_id = uuid.uuid4().hex[:10]
@@ -861,6 +924,9 @@ async def run_stealth_scan(
             logger.info(f"Stealth full scan started as background job {job_id}")
             return {"success": True, "status": "pending", "job_id": job_id,
                     "message": "Full scan started. Poll /api/stealth-scan/status/{job_id} every 5s."}
+    except asyncio.TimeoutError:
+        logger.error("Stealth quick scan timed out after 120s")
+        raise HTTPException(status_code=504, detail="Stealth scan timed out. NEPSE API may be slow. Try again.")
     except Exception as e:
         logger.error(f"Stealth scan failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -956,38 +1022,33 @@ async def _refresh_market_regime_background():
 
 async def _fetch_market_regime_with_timeout():
     """Fetch market regime with 60 second timeout (Azure->Nepal latency + double fetch issue)."""
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
     
     def fetch_regime_data():
         """Fetch regime in thread."""
-        # All imports already done at module level - just use them
         screener = MasterStockScreener(strategy="momentum")
         regime, reason = screener.check_market_regime()
         
-        # Fetch index data for display (screener already cached internally)
         fetcher = NepseFetcher()
-        index_df = fetcher.fetch_index_history(days=60)  # Need 60 for accurate EMA50
+        index_df = fetcher.fetch_index_history(days=60)
         
         nepse_index = float(index_df['close'].iloc[-1]) if not index_df.empty else 0
         ema50 = float(index_df['close'].ewm(span=50).mean().iloc[-1]) if len(index_df) >= 50 else 0
         
         return regime, reason, nepse_index, ema50
     
-    # Run in thread pool with 60 second timeout (Azure->Nepal has very high latency)
+    # Use the shared scan pool instead of creating a new executor each time
     loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor() as executor:
-        try:
-            regime, reason, nepse_index, ema50 = await asyncio.wait_for(
-                loop.run_in_executor(executor, fetch_regime_data),
-                timeout=60.0
-            )
-        except asyncio.TimeoutError:
-            logger.warning("⏱️ NEPSE API timeout (60s), using default values")
-            regime = "BULL"
-            reason = "Market data temporarily unavailable (NEPSE API timeout - high Azure→Nepal latency)"
-            nepse_index = 0
-            ema50 = 0
+    try:
+        regime, reason, nepse_index, ema50 = await asyncio.wait_for(
+            loop.run_in_executor(_SCAN_POOL, fetch_regime_data),
+            timeout=60.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning("⏱️ NEPSE API timeout (60s), using default values")
+        regime = "BULL"
+        reason = "Market data temporarily unavailable (NEPSE API timeout - high Azure→Nepal latency)"
+        nepse_index = 0
+        ema50 = 0
     
     return MarketRegimeResponse(
         regime=regime,

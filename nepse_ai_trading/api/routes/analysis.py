@@ -803,14 +803,24 @@ async def get_master_screener(
     🎯 Run the full 4-Pillar quantitative analysis on ALL NEPSE stocks.
     
     This is the main endpoint for finding investment opportunities.
+    Non-blocking: runs in a dedicated thread pool so other endpoints stay responsive.
     """
     from datetime import datetime
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
     
     try:
         from analysis.master_screener import MasterStockScreener
         
-        screener = MasterStockScreener()
-        results = screener.run_full_analysis(min_score=min_score, top_n=top_n)
+        def _do_screener():
+            screener = MasterStockScreener()
+            return screener.run_full_analysis(min_score=min_score, top_n=top_n, max_workers=50)
+        
+        loop = asyncio.get_event_loop()
+        results = await asyncio.wait_for(
+            loop.run_in_executor(None, _do_screener),
+            timeout=180.0,
+        )
         
         return {
             "success": True,
@@ -834,6 +844,9 @@ async def get_master_screener(
             },
         }
         
+    except asyncio.TimeoutError:
+        logger.error("Master screener timed out after 180s")
+        raise HTTPException(status_code=504, detail="Screener timed out. NEPSE API may be slow.")
     except Exception as e:
         logger.error(f"Master screener error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
