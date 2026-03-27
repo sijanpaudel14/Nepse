@@ -16,6 +16,7 @@ interface ScanParams {
 interface StealthParams {
   sector?: string;
   maxPrice?: number;
+  quick?: boolean;
 }
 
 interface AnalyzeParams {
@@ -87,6 +88,7 @@ export async function runStealthScan(params: StealthParams = {}, signal?: AbortS
   const searchParams = new URLSearchParams();
   if (params.sector) searchParams.set('sector', params.sector);
   if (params.maxPrice) searchParams.set('max_price', String(params.maxPrice));
+  if (params.quick !== undefined) searchParams.set('quick', String(params.quick));
 
   return fetchAPI<StealthResponse>(`/api/stealth-scan?${searchParams}`, { signal });
 }

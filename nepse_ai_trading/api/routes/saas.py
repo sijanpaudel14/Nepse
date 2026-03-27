@@ -751,6 +751,7 @@ async def run_market_scan(
 async def run_stealth_scan(
     sector: Optional[str] = Query(None),
     max_price: Optional[float] = Query(None),
+    quick: bool = Query(default=False, description="Quick scan uses live market data only (fast). Full scan fetches per-stock history for deeper analysis (slow, 5-10 min)."),
 ):
     """
     Run the Stealth Radar - Detect Smart Money Accumulation.
@@ -759,11 +760,14 @@ async def run_stealth_scan(
     - Technical Score is LOW (price hasn't broken out)
     - Broker Score is HIGH (heavy institutional buying)
     - Distribution Risk is LOW (brokers not selling)
+    
+    quick=False (default): full per-stock history analysis (~5-10 min from cloud)
+    quick=True: live market data only, much faster (~30 sec) but less precise
     """
     try:
         from analysis.master_screener import MasterStockScreener
         
-        logger.info(f"API Stealth Scan: sector={sector}")
+        logger.info(f"API Stealth Scan: sector={sector}, quick={quick}")
         
         # Initialize screener
         screener = MasterStockScreener(
@@ -772,9 +776,7 @@ async def run_stealth_scan(
             max_price=max_price
         )
         
-        # Run analysis. quick_mode=True uses cached/live-market data without per-stock history fetches,
-        # keeping the response time under ~5 seconds. Full mode would take 10+ minutes from cloud to Nepal.
-        results = screener.run_full_analysis(quick_mode=True)
+        results = screener.run_full_analysis(quick_mode=quick)
         
         # Filter for stealth criteria
         stealth_stocks = []

@@ -227,21 +227,22 @@ export default function StealthPage() {
   const RESULTS_KEY = 'nepse-stealth-results-v1'; // persist scan results across nav
   const HISTORY_KEY = 'nepse-stealth-history-v1';
   const [sector, setSector] = useState('');
+  const [quickMode, setQuickMode] = useState(false); // false = full deep scan (default)
   const stealthAbortRef = useRef<AbortController | null>(null);
   const [isStealthRunning, setIsStealthRunning] = useState(false);
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
   const [cachedResults, setCachedResults] = useState<StealthResponse | null>(null); // last successful scan
 
   const { data: queryData, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['stealth-scan', sector],
+    queryKey: ['stealth-scan', sector, quickMode],
     queryFn: async () => {
       const controller = new AbortController();
       stealthAbortRef.current = controller;
       setIsStealthRunning(true);
       try {
-        const result = await runStealthScan({ sector: sector || undefined }, controller.signal);
+        const result = await runStealthScan({ sector: sector || undefined, quick: quickMode }, controller.signal);
         // Persist fresh results so user sees them on return navigation
-        try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, result })); } catch { /* quota */ }
+        try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, quickMode, result })); } catch { /* quota */ }
         setCachedResults(result);
         return result;
       } finally {
@@ -266,6 +267,7 @@ export default function StealthPage() {
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (typeof parsed.sector === 'string') setSector(parsed.sector);
+      if (typeof parsed.quickMode === 'boolean') setQuickMode(parsed.quickMode);
     } catch {
       // ignore invalid storage
     }
@@ -281,13 +283,13 @@ export default function StealthPage() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sector }));
-  }, [sector]);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sector, quickMode }));
+  }, [sector, quickMode]);
 
   const handleScan = () => {
     setHistory(
       pushScanHistory(HISTORY_KEY, {
-        label: `Stealth | ${sector || 'All sectors'}`,
+        label: `Stealth | ${sector || 'All sectors'} | ${quickMode ? 'Quick' : 'Full'}`,
         value: JSON.stringify({ sector }),
       })
     );
@@ -380,6 +382,35 @@ export default function StealthPage() {
             </>
           )}
         </button>
+
+        {/* Quick / Full scan toggle */}
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+          <button
+            onClick={() => setQuickMode(false)}
+            title="Full Scan: fetches per-stock history for deep analysis (~5-10 min)"
+            className={cn(
+              'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+              !quickMode
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            Full Scan
+          </button>
+          <button
+            onClick={() => setQuickMode(true)}
+            title="Quick Scan: uses live market data only, faster (~30 sec) but less precise"
+            className={cn(
+              'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+              quickMode
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            Quick Scan
+          </button>
+        </div>
+
         <button
           onClick={handleStop}
           disabled={!isStealthRunning}
@@ -394,6 +425,17 @@ export default function StealthPage() {
           Stop
         </button>
       </div>
+      {/* Scan mode info banner */}
+      {!quickMode && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-4 py-2.5 text-sm text-warning max-w-2xl">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <span>
+            <strong>Full Scan mode</strong> — fetches historical data for every stock (~300 API calls to NEPSE). 
+            Expect 5–10 minutes. Switch to <strong>Quick Scan</strong> for a 30-second result using live market data.
+          </span>
+        </div>
+      )}
+
       <div className="max-w-xl">
         <ScanHistoryPanel
           title="Stealth Scan History"
