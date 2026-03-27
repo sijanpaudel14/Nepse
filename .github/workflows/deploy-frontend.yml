@@ -1,4 +1,4 @@
-name: Deploy Frontend to Azure
+name: Deploy Frontend to Vercel
 
 on:
   push:
@@ -10,11 +10,11 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
-  AZURE_RESOURCE_GROUP: rg-nepse-trading
-  STORAGE_ACCOUNT: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     
     steps:
@@ -24,105 +24,40 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'yarn'
           cache-dependency-path: nepse-saas-frontend/yarn.lock
 
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
 
-      - name: Get Backend URL
-        id: backend
-        run: |
-          BACKEND_URL=$(az containerapp show \
-            --name nepse-api \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --query "properties.configuration.ingress.fqdn" -o tsv)
-          echo "url=https://$BACKEND_URL" >> $GITHUB_OUTPUT
-          echo "Backend URL: https://$BACKEND_URL"
-
-      - name: Build Frontend
+      - name: Pull Vercel Environment Information
         working-directory: nepse-saas-frontend
-        env:
-          NEXT_PUBLIC_API_URL: ${{ steps.backend.outputs.url }}
-          BUILD_MODE: static
-        run: |
-          # Install dependencies
-          yarn install --frozen-lockfile
-          
-          # Create production env
-          echo "NEXT_PUBLIC_API_URL=${{ steps.backend.outputs.url }}" > .env.production
-          
-          # Build static export
-          yarn build
-          
-          # Verify build
-          ls -la out/
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Deploy to Azure Storage
+      - name: Build Project Artifacts
         working-directory: nepse-saas-frontend
-        run: |
-          # Get storage account key
-          STORAGE_KEY=$(az storage account keys list \
-            --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --query "[0].value" -o tsv)
-          
-          # Upload to $web container using account key
-          az storage blob upload-batch \
-            --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
-            --account-key "$STORAGE_KEY" \
-            --destination '$web' \
-            --source ./out \
-            --overwrite \
-            --pattern '*'
-          
-          echo "✅ Files uploaded to Azure Storage"
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
-      - name: Purge CDN Cache (if exists)
-        continue-on-error: true
+      - name: Deploy Project Artifacts to Vercel
+        working-directory: nepse-saas-frontend
+        id: deploy
         run: |
-          # Try to purge CDN cache (will fail gracefully if CDN doesn't exist)
-          az cdn endpoint purge \
-            --name nepse \
-            --profile-name nepse-cdn \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --content-paths "/*" \
-            --no-wait || echo "No CDN found or purge failed (not critical)"
-
-      - name: Get Frontend URL
-        id: frontend
-        run: |
-          FRONTEND_URL=$(az storage account show \
-            --name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --query "primaryEndpoints.web" -o tsv)
-          echo "url=$FRONTEND_URL" >> $GITHUB_OUTPUT
-          echo "Frontend URL: $FRONTEND_URL"
-
-      - name: Verify deployment
-        run: |
-          # Wait for propagation
-          sleep 10
-          
-          # Test frontend is accessible
-          curl -f ${{ steps.frontend.outputs.url }} || exit 1
-          
-          echo "✅ Frontend deployment successful!"
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployment URL: $DEPLOYMENT_URL"
 
       - name: Post deployment summary
         if: success()
         run: |
           echo "### 🎨 Frontend Deployment Successful" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Frontend URL:** ${{ steps.frontend.outputs.url }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Backend API:** ${{ steps.backend.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Production URL:** https://nepse.sijanpaudel.com.np" >> $GITHUB_STEP_SUMMARY
+          echo "- **Vercel URL:** ${{ steps.deploy.outputs.url }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🎉 Your app is live!" >> $GITHUB_STEP_SUMMARY
+          echo "🎉 Your app is live on Vercel!" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
         if: failure()
