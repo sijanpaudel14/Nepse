@@ -136,6 +136,7 @@ export default function IPOExitPage() {
   const HISTORY_KEY = 'nepse-ipo-exit-history-v1';
   const [symbol, setSymbol] = useState('');
   const [searchSymbol, setSearchSymbol] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0); // bumped on every Analyze click to force re-fetch
   const [hydrated, setHydrated] = useState(false);
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
@@ -162,24 +163,22 @@ export default function IPOExitPage() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ symbol, searchSymbol }));
   }, [symbol, searchSymbol, hydrated]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['ipo-exit', searchSymbol],
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['ipo-exit', searchSymbol, refreshKey], // refreshKey forces re-fetch on every Analyze click
     queryFn: () => getIPOExit({ symbol: searchSymbol }),
     enabled: !!searchSymbol,
     retry: 1,
-    staleTime: 0, // Always fetch fresh data
-    gcTime: 0, // Don't keep in cache (renamed from cacheTime in React Query v5)
+    staleTime: 0,
+    gcTime: 0,
   });
 
-  const handleSubmit = () => {
+  // Always triggers a fresh fetch — sets symbol + bumps refreshKey so query key always changes
+  const handleAnalyze = () => {
     const clean = symbol.trim().toUpperCase();
     if (!clean) return;
     setHistory(pushScanHistory(HISTORY_KEY, { label: clean, value: clean }));
-    if (clean === searchSymbol) {
-      refetch();
-    } else {
-      setSearchSymbol(clean);
-    }
+    setSearchSymbol(clean);
+    setRefreshKey((k) => k + 1); // guarantees query key changes even when symbol is the same
   };
 
   const ipo = data?.data;
@@ -203,18 +202,13 @@ export default function IPOExitPage() {
           <SymbolInput
             value={symbol}
             onChange={setSymbol}
-            onSubmit={handleSubmit}
+            onSubmit={handleAnalyze}
             placeholder="Enter IPO symbol (e.g., SOHL)"
             isLoading={isLoading}
           />
         </div>
         <button
-          onClick={() => {
-            const clean = symbol.trim().toUpperCase();
-            if (!clean) return;
-            setHistory(pushScanHistory(HISTORY_KEY, { label: clean, value: clean }));
-            setSearchSymbol(clean); // This will trigger a fresh fetch
-          }}
+          onClick={handleAnalyze}
           disabled={isLoading || !symbol.trim()}
           className="px-6 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground rounded-lg font-semibold transition-colors flex items-center gap-2"
         >
@@ -228,8 +222,8 @@ export default function IPOExitPage() {
           items={history}
           onSelect={(value) => {
             setSymbol(value);
-            if (value === searchSymbol) refetch();
-            else setSearchSymbol(value);
+            setSearchSymbol(value);
+            setRefreshKey((k) => k + 1);
           }}
           onDelete={(id) => setHistory(removeScanHistoryItem(HISTORY_KEY, id))}
           onClear={() => {

@@ -182,7 +182,7 @@ export default function BulkDealsPage() {
             refetch();
           }}
           disabled={isLoading}
-          className="btn-secondary"
+          className="btn-secondary mr-24"
         >
           {isLoading ? <Activity className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
         </button>
