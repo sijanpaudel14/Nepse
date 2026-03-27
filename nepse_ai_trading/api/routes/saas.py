@@ -36,6 +36,11 @@ from concurrent.futures import ThreadPoolExecutor
 # blocking the rest of the API.
 _SCAN_POOL = ThreadPoolExecutor(max_workers=15, thread_name_prefix="scan")
 
+# Separate smaller pool for calendar — each job fetches 90-day history per stock.
+# Keeping it at 8 workers prevents OOM on the 2GB Azure container when both
+# scan and calendar run concurrently.
+_CALENDAR_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cal")
+
 # Background job store for long-running scans (Stealth full scan)
 _stealth_jobs: Dict[str, Dict[str, Any]] = {}
 _stealth_executor = ThreadPoolExecutor(max_workers=15)  # one full scan at a time
@@ -2609,6 +2614,9 @@ async def get_trading_calendar(
                             "signal_type": signal.signal_type.value if hasattr(signal.signal_type, "value") else str(signal.signal_type),
                             "trend_phase": signal.trend_phase.value if hasattr(signal.trend_phase, "value") else str(signal.trend_phase),
                             "score": score,
+                            "rsi": round(float(getattr(signal, "rsi", 0) or 0), 1),
+                            "volume_spike": round(float(getattr(signal, "volume_spike", 0) or 0), 2),
+                            "distribution_risk": str(getattr(signal, "cycle_phase", "N/A") or "N/A").upper(),
                         }
                         with lock:
                             candidates.append(entry)
@@ -2672,9 +2680,9 @@ async def get_trading_calendar(
                     "target_price": d["target_price"],
                     "stop_loss": d["stop_loss"],
                     "confidence": round(d["daily_score"], 1),
-                    "rsi": 0,    # TechnicalSignalEngine handles RSI internally
-                    "volume_spike": 0,
-                    "distribution_risk": "N/A",
+                    "rsi": d.get("rsi", 0),
+                    "volume_spike": d.get("volume_spike", 0),
+                    "distribution_risk": d.get("distribution_risk", "N/A"),
                     "reason": (
                         f"{d['signal_type'].replace('_', ' ').title()} · "
                         f"Entry prob {d['entry_prob']:.0f}% · "

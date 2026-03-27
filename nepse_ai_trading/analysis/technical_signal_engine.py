@@ -178,7 +178,11 @@ class TradingSignal:
     # Market Context
     market_regime: str = "unknown"  # "bull", "bear", "sideways"
     sector_trend: str = "unknown"   # "leading", "lagging", "neutral"
-    
+
+    # Computed indicators exposed for downstream consumers (e.g. SaaS API)
+    rsi: float = 0.0                # 14-day RSI at signal generation time
+    volume_spike: float = 0.0       # today_volume / 20-day avg volume
+
     # Timestamps
     generated_at: datetime = field(default_factory=datetime.now)
 
@@ -325,7 +329,23 @@ class TechnicalSignalEngine:
         # 8. Add broker data insights if available
         if broker_data or self.sharehub:
             signal = self._enhance_with_broker_data(signal, symbol, broker_data)
-        
+
+        # Populate RSI and volume_spike so API consumers don't need to re-fetch
+        try:
+            close_arr = df["close"].values
+            rsi_val = self._calculate_rsi(close_arr)
+            signal.rsi = float(rsi_val) if rsi_val is not None else 0.0
+        except Exception:
+            signal.rsi = 0.0
+        try:
+            if "volume" in df.columns:
+                vol = df["volume"].values
+                avg_vol = float(np.mean(vol[-20:])) if len(vol) >= 20 else float(np.mean(vol)) if len(vol) > 0 else 0.0
+                last_vol = float(vol[-1]) if len(vol) > 0 else 0.0
+                signal.volume_spike = round(last_vol / avg_vol, 2) if avg_vol > 0 else 1.0
+        except Exception:
+            signal.volume_spike = 0.0
+
         logger.info(f"📊 {symbol}: Signal={signal.signal_type.value}, "
                    f"Confidence={signal.confidence:.0f}%, Phase={trend_phase.value}")
         
