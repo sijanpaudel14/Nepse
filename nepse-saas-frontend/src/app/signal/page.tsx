@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { getSignal, type SignalResponse } from '@/lib/api';
@@ -41,8 +41,17 @@ import {
 } from '@/lib/scan-history';
 
 export default function SignalPage() {
+  return (
+    <Suspense>
+      <SignalContent />
+    </Suspense>
+  );
+}
+
+function SignalContent() {
   const STORAGE_KEY = 'nepse-signal-state-v1';
   const HISTORY_KEY = 'nepse-signal-history-v1';
+  const searchParams = useSearchParams();
   const [symbol, setSymbol] = useState('');
   const [searchSymbol, setSearchSymbol] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -50,18 +59,26 @@ export default function SignalPage() {
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
 
   useEffect(() => {
+    // URL param takes priority over localStorage (e.g. redirect from Trading Calendar)
+    const urlSymbol = searchParams.get('symbol')?.trim().toUpperCase();
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (typeof parsed.symbol === 'string') setSymbol(parsed.symbol);
-      if (typeof parsed.searchSymbol === 'string') setSearchSymbol(parsed.searchSymbol);
+      if (urlSymbol) {
+        setSymbol(urlSymbol);
+        setSearchSymbol(urlSymbol);
+        setRefreshKey((k) => k + 1);
+      } else {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.symbol === 'string') setSymbol(parsed.symbol);
+        if (typeof parsed.searchSymbol === 'string') setSearchSymbol(parsed.searchSymbol);
+      }
     } catch {
       // ignore invalid storage
     } finally {
       setHydrated(true);
     }
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     setHistory(loadScanHistory(HISTORY_KEY));
