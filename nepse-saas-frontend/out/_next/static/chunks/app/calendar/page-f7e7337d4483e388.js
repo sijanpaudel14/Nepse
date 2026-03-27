@@ -1,0 +1,71 @@
+(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[329],{2406:function(e,t,s){Promise.resolve().then(s.bind(s,9290))},4207:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Activity",[["path",{d:"M22 12h-4l-3 9L9 3l-3 9H2",key:"d5dnw9"}]])},4241:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Calendar",[["path",{d:"M8 2v4",key:"1cmpym"}],["path",{d:"M16 2v4",key:"4m81vk"}],["rect",{width:"18",height:"18",x:"3",y:"4",rx:"2",key:"1hopcy"}],["path",{d:"M3 10h18",key:"8toen8"}]])},2468:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Check",[["path",{d:"M20 6 9 17l-5-5",key:"1gmf2c"}]])},2421:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("ChevronDown",[["path",{d:"m6 9 6 6 6-6",key:"qrunsl"}]])},2940:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("CircleCheckBig",[["path",{d:"M22 11.08V12a10 10 0 1 1-5.93-9.14",key:"g774vq"}],["path",{d:"m9 11 3 3L22 4",key:"1pflzl"}]])},933:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Clock",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["polyline",{points:"12 6 12 12 16 14",key:"68esgv"}]])},404:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Filter",[["polygon",{points:"22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3",key:"1yg77f"}]])},1568:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("History",[["path",{d:"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8",key:"1357e3"}],["path",{d:"M3 3v5h5",key:"1xhq8a"}],["path",{d:"M12 7v5l4 2",key:"1fdv2h"}]])},690:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Info",[["circle",{cx:"12",cy:"12",r:"10",key:"1mglay"}],["path",{d:"M12 16v-4",key:"1dtifu"}],["path",{d:"M12 8h.01",key:"e9boi3"}]])},8002:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Minus",[["path",{d:"M5 12h14",key:"1ays0h"}]])},6706:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("RefreshCw",[["path",{d:"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8",key:"v9h5vc"}],["path",{d:"M21 3v5h-5",key:"1q7to0"}],["path",{d:"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16",key:"3uifl3"}],["path",{d:"M8 16H3v5",key:"1cv678"}]])},500:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Shield",[["path",{d:"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",key:"oel41y"}]])},883:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("Trash2",[["path",{d:"M3 6h18",key:"d0wm0j"}],["path",{d:"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6",key:"4alrt4"}],["path",{d:"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",key:"v07s0e"}],["line",{x1:"10",x2:"10",y1:"11",y2:"17",key:"1uufr5"}],["line",{x1:"14",x2:"14",y1:"11",y2:"17",key:"xtxkd"}]])},4697:function(e,t,s){"use strict";s.d(t,{Z:function(){return r}});/**
+ * @license lucide-react v0.359.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */let r=(0,s(3480).Z)("X",[["path",{d:"M18 6 6 18",key:"1bl5f8"}],["path",{d:"m6 6 12 12",key:"d8bk6v"}]])},9290:function(e,t,s){"use strict";s.r(t),s.d(t,{default:function(){return b}});var r=s(7437),a=s(2265),n=s(2516),d=s(2800),l=s(4241),i=s(4207),c=s(6706),o=s(404),u=s(1902),x=s(500),m=s(933),h=s(9354),f=s(8347),p=s(4719),y=s(7138);function g(e){let{stock:t}=e;return(0,r.jsxs)(y.default,{href:"/signal?symbol=".concat(t.symbol),className:"block rounded-lg border border-border bg-card p-3 hover:border-primary hover:bg-card-hover transition-all",children:[(0,r.jsxs)("div",{className:"flex items-start justify-between",children:[(0,r.jsxs)("div",{children:[(0,r.jsx)("p",{className:"font-bold text-primary",children:t.symbol}),(0,r.jsx)("p",{className:"text-xs text-muted-foreground truncate max-w-[120px]",children:t.name})]}),(0,r.jsx)(f.eR,{score:t.confidence,size:"sm"})]}),(0,r.jsxs)("div",{className:"mt-2 space-y-1 text-xs",children:[(0,r.jsxs)("div",{className:"flex justify-between",children:[(0,r.jsx)("span",{className:"text-muted-foreground",children:"Entry"}),(0,r.jsxs)("span",{className:"font-mono",children:["Rs. ",t.entry_price.toLocaleString()]})]}),(0,r.jsxs)("div",{className:"flex justify-between",children:[(0,r.jsx)("span",{className:"text-muted-foreground",children:"Target"}),(0,r.jsxs)("span",{className:"font-mono text-bull",children:["Rs. ",t.target_price.toLocaleString()]})]}),(0,r.jsxs)("div",{className:"flex justify-between",children:[(0,r.jsx)("span",{className:"text-muted-foreground",children:"Stop"}),(0,r.jsxs)("span",{className:"font-mono text-bear",children:["Rs. ",t.stop_loss.toLocaleString()]})]})]}),(0,r.jsx)("p",{className:"mt-2 text-xs text-muted-foreground line-clamp-2",children:t.reason}),(0,r.jsx)("div",{className:"mt-2 text-xs text-muted-foreground bg-muted/20 rounded px-2 py-1",children:t.sector})]})}function j(e){let{day:t}=e,s=t.date===new Date().toISOString().split("T")[0],a=t.stocks.length>0;return(0,r.jsxs)("div",{className:(0,h.cn)("rounded-xl border p-4 min-h-[200px]",s?"border-primary bg-primary/5":"border-border bg-card",!a&&"opacity-60"),children:[(0,r.jsxs)("div",{className:"flex items-center justify-between mb-3",children:[(0,r.jsxs)("div",{children:[(0,r.jsx)("p",{className:(0,h.cn)("text-sm font-medium",s?"text-primary":"text-foreground"),children:t.day_name}),(0,r.jsx)("p",{className:"text-xs text-muted-foreground",children:t.date})]}),s&&(0,r.jsx)("span",{className:"rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground",children:"TODAY"})]}),a?(0,r.jsx)("div",{className:"space-y-2",children:t.stocks.map((e,t)=>(0,r.jsx)(g,{stock:e},t))}):(0,r.jsx)("div",{className:"flex items-center justify-center h-24 text-muted-foreground text-sm",children:"No picks for this day"})]})}function b(){let e="nepse-calendar-ui-v1",t="nepse-calendar-history-v1",[s,y]=(0,a.useState)(14),[g,b]=(0,a.useState)(""),[N,v]=(0,a.useState)([]);(0,a.useEffect)(()=>{try{let t=window.localStorage.getItem(e);if(!t)return;let s=JSON.parse(t);"number"==typeof s.days&&[7,14,30].includes(s.days)&&y(s.days),"string"==typeof s.sector&&b(s.sector)}catch(e){}},[]),(0,a.useEffect)(()=>{v((0,p.sD)(t))},[]),(0,a.useEffect)(()=>{window.localStorage.setItem(e,JSON.stringify({days:s,sector:g}))},[s,g]),(0,a.useEffect)(()=>{v((0,p.$q)(t,{label:"Calendar | ".concat(s,"d | ").concat(g||"All sectors"),value:JSON.stringify({days:s,sector:g})}))},[]);let{data:k,isLoading:w,isError:Z,error:M,refetch:S}=(0,n.a)({queryKey:["trading-calendar",s,g],queryFn:()=>(0,d.Rs)({days:s,sector:g||void 0}),retry:1,staleTime:3e5}),C=null==k?void 0:k.data;return(0,r.jsxs)("div",{className:"space-y-6",children:[(0,r.jsxs)("div",{className:"flex items-start justify-between",children:[(0,r.jsxs)("div",{children:[(0,r.jsxs)("h1",{className:"text-2xl font-bold flex items-center gap-2",children:[(0,r.jsx)(l.Z,{className:"h-6 w-6 text-primary"}),"Trading Calendar"]}),(0,r.jsxs)("p",{className:"text-muted-foreground mt-1",children:["See which stocks to buy on which dates for the next ",s," days"]})]}),(0,r.jsx)("button",{onClick:()=>S(),disabled:w,className:"btn-secondary mr-24",children:w?(0,r.jsx)(i.Z,{className:"h-4 w-4 animate-spin"}):(0,r.jsx)(c.Z,{className:"h-4 w-4"})})]}),(0,r.jsxs)("div",{className:"flex flex-wrap gap-4",children:[(0,r.jsxs)("div",{className:"flex items-center gap-2",children:[(0,r.jsx)("span",{className:"text-sm text-muted-foreground",children:"Show:"}),(0,r.jsx)("div",{className:"flex rounded-lg border border-border bg-card p-1",children:[7,14,30].map(e=>(0,r.jsxs)("button",{onClick:()=>y(e),className:(0,h.cn)("px-3 py-1.5 text-sm font-medium rounded-md transition-colors",s===e?"bg-primary text-primary-foreground":"text-muted-foreground hover:text-foreground"),children:[e," days"]},e))})]}),(0,r.jsxs)("div",{className:"flex items-center gap-2",children:[(0,r.jsx)(o.Z,{className:"h-4 w-4 text-muted-foreground"}),(0,r.jsx)(f.ld,{value:g,onChange:b,options:[{value:"",label:"All Sectors"},{value:"hydro",label:"Hydropower"},{value:"bank",label:"Banking"},{value:"finance",label:"Finance"},{value:"microfinance",label:"Microfinance"},{value:"life_insurance",label:"Life Insurance"},{value:"non_life_insurance",label:"Non-Life Insurance"}],className:"min-w-[240px]"})]})]}),(0,r.jsx)("div",{className:"max-w-xl",children:(0,r.jsx)(f.sz,{title:"Calendar Scan History",items:N,onSelect:e=>{try{let t=JSON.parse(e);"number"==typeof t.days&&[7,14,30].includes(t.days)&&y(t.days),"string"==typeof t.sector&&b(t.sector),setTimeout(()=>S(),0)}catch(e){}},onDelete:e=>v((0,p.ZG)(t,e)),onClear:()=>{(0,p.Ln)(t),v([])}})}),C&&(0,r.jsxs)("div",{className:"grid grid-cols-3 gap-4",children:[(0,r.jsxs)("div",{className:"rounded-xl border border-border bg-card p-4",children:[(0,r.jsx)("p",{className:"text-sm text-muted-foreground",children:"Scan Date"}),(0,r.jsx)("p",{className:"text-lg font-semibold",children:C.scan_date})]}),(0,r.jsxs)("div",{className:"rounded-xl border border-border bg-card p-4",children:[(0,r.jsx)("p",{className:"text-sm text-muted-foreground",children:"Days Ahead"}),(0,r.jsxs)("p",{className:"text-lg font-semibold",children:[C.days_ahead," days"]})]}),(0,r.jsxs)("div",{className:"rounded-xl border border-border bg-card p-4",children:[(0,r.jsx)("p",{className:"text-sm text-muted-foreground",children:"Total Opportunities"}),(0,r.jsxs)("p",{className:"text-lg font-semibold",children:[C.total_stocks," stocks"]})]})]}),w&&(0,r.jsx)(f.IZ,{}),Z&&(0,r.jsx)(f.vD,{title:"Error",variant:"error",children:(null==M?void 0:M.message)||"Failed to load calendar. Please try again."}),C&&C.calendar.length>0&&(0,r.jsx)("div",{className:"grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4",children:C.calendar.map((e,t)=>(0,r.jsx)(j,{day:e},t))}),C&&0===C.calendar.length&&(0,r.jsx)(f.ub,{icon:l.Z,title:"No Opportunities Found",description:"No trading opportunities detected for the selected period and sector. Try expanding your filters."}),(0,r.jsxs)("div",{className:"rounded-xl border border-border bg-card p-4",children:[(0,r.jsx)(f.M$,{title:"How to Read the Calendar"}),(0,r.jsxs)("div",{className:"grid md:grid-cols-3 gap-4 text-sm",children:[(0,r.jsxs)("div",{className:"flex items-start gap-2",children:[(0,r.jsx)(f.eR,{score:80,size:"sm"}),(0,r.jsxs)("div",{children:[(0,r.jsx)("p",{className:"font-medium",children:"Confidence Score"}),(0,r.jsx)("p",{className:"text-muted-foreground",children:"Higher = stronger setup. Look for 60+"})]})]}),(0,r.jsxs)("div",{className:"flex items-start gap-2",children:[(0,r.jsx)("div",{className:"rounded bg-bull/20 p-2",children:(0,r.jsx)(u.Z,{className:"h-4 w-4 text-bull"})}),(0,r.jsxs)("div",{children:[(0,r.jsx)("p",{className:"font-medium",children:"Entry Price"}),(0,r.jsx)("p",{className:"text-muted-foreground",children:"Buy at or below this price"})]})]}),(0,r.jsxs)("div",{className:"flex items-start gap-2",children:[(0,r.jsx)("div",{className:"rounded bg-bear/20 p-2",children:(0,r.jsx)(x.Z,{className:"h-4 w-4 text-bear"})}),(0,r.jsxs)("div",{children:[(0,r.jsx)("p",{className:"font-medium",children:"Stop Loss"}),(0,r.jsx)("p",{className:"text-muted-foreground",children:"Exit if price drops below this"})]})]})]}),(0,r.jsx)("p",{className:"mt-4 text-xs text-muted-foreground",children:"Click any stock card to see the full trading signal with detailed entry and exit timing."})]}),(0,r.jsxs)("div",{className:"rounded-lg bg-muted/20 p-4 text-center text-sm text-muted-foreground",children:[(0,r.jsx)(m.Z,{className:"h-4 w-4 inline mr-1"}),"Calendar updates daily. Past dates are estimates based on historical patterns. Always verify before trading."]})]})}}},function(e){e.O(0,[842,65,583,138,445,971,23,744],function(){return e(e.s=2406)}),_N_E=e.O()}]);
