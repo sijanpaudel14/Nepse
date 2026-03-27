@@ -42,5 +42,5 @@ properties:
         storageType: AzureFile
         storageName: nepsefiles
   scale:
-    minReplicaCount: 0
+    minReplicaCount: 1
     maxReplicaCount: 1

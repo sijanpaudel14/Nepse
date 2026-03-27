@@ -46,7 +46,7 @@ from core.config import settings
 _thread_local = threading.local()
 
 # Limit concurrent API calls to avoid overwhelming NEPSE/ShareHub servers
-_api_semaphore = threading.Semaphore(25)
+_api_semaphore = threading.Semaphore(12)
 
 # News Scraper & AI Advisor (optional - for enhanced analysis)
 try:
@@ -718,7 +718,7 @@ class MasterStockScreener:
         top_n: int = 10,
         include_rejected: bool = False,
         quick_mode: bool = False,
-        max_workers: int = 30,
+        max_workers: int = 15,
         cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """
@@ -865,7 +865,7 @@ class MasterStockScreener:
     def run_stealth_analysis(
         self,
         top_n: int = 500,
-        max_workers: int = 30,
+        max_workers: int = 15,
         cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """

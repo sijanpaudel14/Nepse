@@ -49,7 +49,16 @@ jobs:
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
             --image ${{ secrets.ACR_NAME }}.azurecr.io/nepse-api:${{ github.sha }} \
             --cpu 1.0 \
-            --memory 2.0Gi
+            --memory 2.0Gi \
+            --min-replicas 1 \
+            --max-replicas 1
+
+          # Set ingress timeout to 300s so long scans don't get cut off
+          az containerapp ingress update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --transport http \
+            --timeout 300 2>/dev/null || true
 
       - name: Verify deployment
         run: |
