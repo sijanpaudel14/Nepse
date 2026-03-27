@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { runStealthScan, pollStealthJob, stopStealthScan, type SectorRotation, type StealthStock, type StealthResponse } from '@/lib/api';
 import { 
   Radar,
@@ -235,15 +235,21 @@ export default function StealthPage() {
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
   const [cachedResults, setCachedResults] = useState<StealthResponse | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stealthAbortRef = useRef<AbortController | null>(null);
+  const queryClient = useQueryClient();
 
   const { data: queryData, refetch } = useQuery({
     queryKey: ['stealth-scan', sector, quickMode],
     queryFn: async () => {
+      const controller = new AbortController();
+      stealthAbortRef.current = controller;
       setIsStealthRunning(true);
       setJobId(null);
       setJobProgress('');
+      // Persist scanning state for quick mode (so navigation back restores it)
+      try { window.localStorage.setItem(SCAN_STATE_KEY, JSON.stringify({ isStealthRunning: true, quickMode })); } catch { /* ignore */ }
       try {
-        const result = await runStealthScan({ sector: sector || undefined, quick: quickMode });
+        const result = await runStealthScan({ sector: sector || undefined, quick: quickMode }, controller.signal);
         // Quick mode returns results directly
         if ('total_stealth_stocks' in result) {
           const stealthResult = result as StealthResponse;
@@ -262,6 +268,12 @@ export default function StealthPage() {
       } catch (e) {
         setIsStealthRunning(false);
         throw e;
+      } finally {
+        stealthAbortRef.current = null;
+        // Clear quick-mode scan state (full mode persists via jobId effect below)
+        if (!jobId) {
+          try { window.localStorage.removeItem(SCAN_STATE_KEY); } catch { /* ignore */ }
+        }
       }
     },
     enabled: false,
@@ -351,6 +363,12 @@ export default function StealthPage() {
         setJobId(parsed.jobId);
         setIsStealthRunning(true);
         setJobProgress(parsed.jobProgress || 'Resuming scan...');
+      } else if (parsed.isStealthRunning) {
+        // Quick-mode scan was running when user navigated away — re-trigger
+        setIsStealthRunning(false); // will be set true by refetch's queryFn
+        window.localStorage.removeItem(SCAN_STATE_KEY);
+        // Small delay to ensure component is fully mounted before refetch
+        setTimeout(() => refetch(), 100);
       }
     } catch {
       // ignore
@@ -386,14 +404,20 @@ export default function StealthPage() {
     // 1. Stop frontend polling
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     pollIntervalRef.current = null;
-    // 2. Tell backend to cancel the job
+    // 2. Abort the frontend fetch (quick mode)
+    if (stealthAbortRef.current) {
+      stealthAbortRef.current.abort();
+      stealthAbortRef.current = null;
+    }
+    // 3. Cancel React Query immediately
+    queryClient.cancelQueries({ queryKey: ['stealth-scan', sector, quickMode] });
+    // 4. Tell backend to cancel the job
     if (jobId) {
       stopStealthScan(jobId).catch(() => {/* ignore */});
     } else {
-      // Quick mode or unknown — stop all running stealth scans
       stopStealthScan().catch(() => {/* ignore */});
     }
-    // 3. Reset UI state
+    // 5. Reset UI state
     setIsStealthRunning(false);
     setJobId(null);
     setJobProgress('Scan stopped by user.');

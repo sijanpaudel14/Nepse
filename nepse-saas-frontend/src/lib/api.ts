@@ -56,15 +56,27 @@ interface BrokerIntelligenceParams {
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
   
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
+  } catch (err) {
+    // Network error, CORS block, or abort
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err; // Let abort errors propagate normally
+    }
+    throw new Error('Unable to reach the server. It may be starting up or temporarily overloaded. Please try again in a moment.');
+  }
 
   if (!response.ok) {
+    if (response.status === 503) {
+      throw new Error('Server is temporarily unavailable (503). The scan may have timed out. Please try again with Quick Scan or a specific sector.');
+    }
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
     throw new Error(error.detail || `API error: ${response.status}`);
   }

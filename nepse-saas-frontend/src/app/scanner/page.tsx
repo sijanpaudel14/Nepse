@@ -415,9 +415,11 @@ export default function ScannerPage() {
       scanAbortRef.current.abort();
       scanAbortRef.current = null;
     }
-    // 2. Tell backend to stop the scan thread
+    // 2. Cancel React Query immediately so isFetching/isLoading clear
+    queryClient.cancelQueries({ queryKey: ['scan', strategy, sector, maxPrice] });
+    // 3. Tell backend to stop the scan thread
     stopScan().catch(() => {/* ignore errors */});
-    // 3. Reset UI state
+    // 4. Reset UI state
     setIsScanRunning(false);
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem('nepse-scan-running-v1');
@@ -504,10 +506,10 @@ export default function ScannerPage() {
 
         <button
           onClick={handleScan}
-          disabled={isLoading || isFetching || isScanRunning}
+          disabled={isScanRunning}
           className="btn-primary"
         >
-          {isLoading || isFetching || isScanRunning ? (
+          {isScanRunning ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
               Scanning...
@@ -597,7 +599,7 @@ export default function ScannerPage() {
             Try adjusting your strategy or sector.
           </p>
         </div>
-      ) : !isLoading && !data ? (
+      ) : !isScanRunning && !data ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16">
           <Search className="h-12 w-12 text-muted-foreground" />
           <h3 className="mt-4 text-xl font-semibold">Ready to Scan</h3>
@@ -609,7 +611,7 @@ export default function ScannerPage() {
       ) : null}
 
       {/* Loading State */}
-      {(isLoading || (isHydratingScan && isFetching)) && (
+      {isScanRunning && (
         <div className="flex flex-col items-center justify-center py-16">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
           <p className="mt-4 text-lg font-medium">Running 4-Pillar Analysis...</p>
