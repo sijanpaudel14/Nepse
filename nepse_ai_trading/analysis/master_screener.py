@@ -46,7 +46,7 @@ from core.config import settings
 _thread_local = threading.local()
 
 # Limit concurrent API calls to avoid overwhelming NEPSE/ShareHub servers
-_api_semaphore = threading.Semaphore(15)
+_api_semaphore = threading.Semaphore(25)
 
 # News Scraper & AI Advisor (optional - for enhanced analysis)
 try:
@@ -718,7 +718,7 @@ class MasterStockScreener:
         top_n: int = 10,
         include_rejected: bool = False,
         quick_mode: bool = False,
-        max_workers: int = 15,
+        max_workers: int = 30,
         cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """
@@ -865,7 +865,7 @@ class MasterStockScreener:
     def run_stealth_analysis(
         self,
         top_n: int = 500,
-        max_workers: int = 15,
+        max_workers: int = 30,
         cancel_event: threading.Event = None,
     ) -> List[ScreenedStock]:
         """
@@ -2259,26 +2259,17 @@ class MasterStockScreener:
         ba = self._broker_accumulation.get(symbol, {})
         result.top3_broker_holding_pct = ba.get("top3_pct", 0)
         
-        # Store DISTRIBUTION RISK data (Broker Profit-Taking Detection)
+        # Read any preloaded distribution risk (on-demand calculation happens after scoring)
         dist_risk = self._distribution_risk_cache.get(symbol, {})
-        
-        # If distribution risk not in cache, calculate it on-demand
-        if not dist_risk:
-            logger.debug(f"Calculating distribution risk on-demand for {symbol}")
-            self._calculate_distribution_risk(symbol, ltp, {}, {})
-            dist_risk = self._distribution_risk_cache.get(symbol, {})
-        
         if dist_risk:
             result.broker_avg_cost = dist_risk.get("avg_cost", 0)
             result.broker_avg_cost_1w = dist_risk.get("avg_cost_1w") or 0
             result.broker_profit_pct = dist_risk.get("profit_pct", 0)
             result.distribution_risk = dist_risk.get("risk_level", "N/A")
             result.distribution_warning = dist_risk.get("warning", "")
-            # Dual timeframe analysis
             result.net_holdings_1m = dist_risk.get("net_holdings_1m", 0)
             result.net_holdings_1w = dist_risk.get("net_holdings_1w", 0)
             result.distribution_divergence = dist_risk.get("distribution_divergence", False)
-            # New intraday distribution fields
             result.intraday_dump_detected = dist_risk.get("intraday_dump_detected", False)
             result.today_open_price = dist_risk.get("open_price", 0) if "open_price" in dist_risk else 0
             result.today_vwap = dist_risk.get("today_vwap", 0)
@@ -2437,6 +2428,29 @@ class MasterStockScreener:
         
         # Apply manipulation penalty to total score
         result.total_score += manipulation_penalty
+        
+        # ========== ON-DEMAND DISTRIBUTION RISK (only for promising stocks) ==========
+        # Calculate distribution risk AFTER base score is known to skip low-scoring stocks
+        # This saves 5 HTTP calls per stock that won't be shown to users
+        dist_risk = self._distribution_risk_cache.get(symbol, {})
+        if not dist_risk and self.sharehub_token and result.total_score >= 40:
+            self._calculate_distribution_risk(symbol, ltp, {}, {})
+            dist_risk = self._distribution_risk_cache.get(symbol, {})
+            if dist_risk:
+                result.broker_avg_cost = dist_risk.get("avg_cost", 0)
+                result.broker_avg_cost_1w = dist_risk.get("avg_cost_1w") or 0
+                result.broker_profit_pct = dist_risk.get("profit_pct", 0)
+                result.distribution_risk = dist_risk.get("risk_level", "N/A")
+                result.distribution_warning = dist_risk.get("warning", "")
+                result.net_holdings_1m = dist_risk.get("net_holdings_1m", 0)
+                result.net_holdings_1w = dist_risk.get("net_holdings_1w", 0)
+                result.distribution_divergence = dist_risk.get("distribution_divergence", False)
+                result.intraday_dump_detected = dist_risk.get("intraday_dump_detected", False)
+                result.today_open_price = dist_risk.get("open_price", 0) if "open_price" in dist_risk else 0
+                result.today_vwap = dist_risk.get("today_vwap", 0)
+                result.open_vs_broker_pct = dist_risk.get("open_vs_broker_pct", 0)
+                result.close_vs_vwap_pct = dist_risk.get("close_vs_vwap_pct", 0)
+                result.intraday_volume_spike = dist_risk.get("volume_spike", 0)
         
         # ========== 🚨 MOMENTUM SCORE CAP FOR INTRADAY DISTRIBUTION ==========
         # If intraday dump detected (Sunday Dump pattern), cap the momentum score
