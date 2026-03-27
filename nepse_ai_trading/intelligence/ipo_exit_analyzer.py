@@ -340,7 +340,7 @@ class IPOExitAnalyzer:
         return None
     
     def _fetch_today_data(self, symbol: str) -> Optional[Dict]:
-        """Fetch today's intraday data (LTP + volume)."""
+        """Fetch today's intraday data (LTP + volume) - only if market is open."""
         try:
             if self.fetcher:
                 live_df = self.fetcher.fetch_live_market()
@@ -349,8 +349,25 @@ class IPOExitAnalyzer:
                     match = live_df[live_df['symbol'].str.upper() == symbol_upper]
                     if not match.empty:
                         row = match.iloc[0]
+                        
+                        # CRITICAL FIX: Check if this is actually TODAY's data
+                        # If market is closed (weekend/holiday), don't append stale data as "today"
+                        today = datetime.now().date()
+                        
+                        # Try to get the actual trade date from the data
+                        if 'date' in row:
+                            trade_date = pd.to_datetime(row['date']).date()
+                        else:
+                            # Assume it's today's data if no date field
+                            trade_date = today
+                        
+                        # Only return if data is actually from today
+                        if trade_date != today:
+                            logger.debug(f"Market data is from {trade_date}, not today ({today}). Skipping append.")
+                            return None
+                        
                         return {
-                            'date': datetime.now().strftime('%Y-%m-%d'),
+                            'date': today.strftime('%Y-%m-%d'),
                             'ltp': float(row.get('close') or row.get('ltp', 0)),
                             'volume': int(row.get('volume', 0) or row.get('totalTradedQty', 0)),
                             'open': float(row.get('open', row.get('ltp', 0))),
@@ -366,11 +383,19 @@ class IPOExitAnalyzer:
                 bars = self.sharehub.get_price_history(symbol.upper(), limit=2)
                 if bars:
                     latest = bars[0]
-                    bar_date = str(latest.get("date") or datetime.now().strftime('%Y-%m-%d'))[:10]
+                    bar_date_str = str(latest.get("date") or datetime.now().strftime('%Y-%m-%d'))[:10]
+                    bar_date = datetime.strptime(bar_date_str, '%Y-%m-%d').date()
+                    today = datetime.now().date()
+                    
+                    # Only return if bar is from today
+                    if bar_date != today:
+                        logger.debug(f"ShareHub bar is from {bar_date}, not today ({today}). Skipping append.")
+                        return None
+                    
                     ltp = float(latest.get("close") or 0)
                     if ltp > 0:
                         return {
-                            'date': bar_date,
+                            'date': bar_date_str,
                             'ltp': ltp,
                             'volume': int(float(latest.get("volume") or 0)),
                             'open': float(latest.get("open") or ltp),
