@@ -1,10 +1,14 @@
 /** @type {import('next').NextConfig} */
+const isStaticBuild = process.env.BUILD_MODE === 'static'
+
 const nextConfig = {
-  output: 'export', // Enable static export
+  // Static export only when explicitly building for Azure Storage
+  // Vercel uses full Next.js build (no output: 'export' needed)
+  ...(isStaticBuild ? { output: 'export' } : {}),
   reactStrictMode: true,
   trailingSlash: true,
   images: {
-    unoptimized: true, // Required for static export
+    unoptimized: true,
   },
   env: {
     NEXT_PUBLIC_API_URL:

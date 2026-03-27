@@ -1,0 +1,8 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "yarn build",
+  "outputDirectory": ".next",
+  "env": {
+    "NEXT_PUBLIC_API_URL": "https://nepse-api.calmwater-c82ed95c.southeastasia.azurecontainerapps.io"
+  }
+}
