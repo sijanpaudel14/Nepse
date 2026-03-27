@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { runStealthScan, type SectorRotation, type StealthStock, type StealthResponse } from '@/lib/api';
+import { runStealthScan, pollStealthJob, type SectorRotation, type StealthStock, type StealthResponse } from '@/lib/api';
 import { 
   Radar,
   Loader2,
@@ -224,35 +224,84 @@ function StealthStockRow({ stock }: { stock: StealthStock }) {
 
 export default function StealthPage() {
   const STORAGE_KEY = 'nepse-stealth-ui-v1';
-  const RESULTS_KEY = 'nepse-stealth-results-v1'; // persist scan results across nav
+  const RESULTS_KEY = 'nepse-stealth-results-v1';
   const HISTORY_KEY = 'nepse-stealth-history-v1';
   const [sector, setSector] = useState('');
-  const [quickMode, setQuickMode] = useState(false); // false = full deep scan (default)
-  const stealthAbortRef = useRef<AbortController | null>(null);
+  const [quickMode, setQuickMode] = useState(false);
   const [isStealthRunning, setIsStealthRunning] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState('');
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
-  const [cachedResults, setCachedResults] = useState<StealthResponse | null>(null); // last successful scan
+  const [cachedResults, setCachedResults] = useState<StealthResponse | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const { data: queryData, isLoading, isFetching, refetch } = useQuery({
+  const { data: queryData, refetch } = useQuery({
     queryKey: ['stealth-scan', sector, quickMode],
     queryFn: async () => {
-      const controller = new AbortController();
-      stealthAbortRef.current = controller;
       setIsStealthRunning(true);
+      setJobId(null);
+      setJobProgress('');
       try {
-        const result = await runStealthScan({ sector: sector || undefined, quick: quickMode }, controller.signal);
-        // Persist fresh results so user sees them on return navigation
-        try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, quickMode, result })); } catch { /* quota */ }
-        setCachedResults(result);
-        return result;
-      } finally {
+        const result = await runStealthScan({ sector: sector || undefined, quick: quickMode });
+        // Quick mode returns results directly
+        if ('total_stealth_stocks' in result) {
+          const stealthResult = result as StealthResponse;
+          try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, quickMode, result: stealthResult })); } catch { /* quota */ }
+          setCachedResults(stealthResult);
+          return stealthResult;
+        }
+        // Full scan returns job_id — start polling
+        if ('job_id' in result) {
+          const pendingResult = result as { job_id: string; status: string };
+          setJobId(pendingResult.job_id);
+          setJobProgress('Full scan started — analyzing all stocks...');
+          return null; // will be filled by polling
+        }
+        return null;
+      } catch (e) {
         setIsStealthRunning(false);
-        stealthAbortRef.current = null;
+        throw e;
       }
     },
     enabled: false,
-    gcTime: Infinity, // keep in React Query cache forever (until explicit refetch)
+    gcTime: Infinity,
   });
+
+  // Poll background job when jobId is set
+  const pollJob = useCallback(async (id: string) => {
+    try {
+      const status = await pollStealthJob(id);
+      if (status.status === 'done' && status.result) {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        setIsStealthRunning(false);
+        setJobId(null);
+        setJobProgress('');
+        try { window.localStorage.setItem(RESULTS_KEY, JSON.stringify({ sector, quickMode, result: status.result })); } catch { /* quota */ }
+        setCachedResults(status.result);
+      } else if (status.status === 'error') {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        setIsStealthRunning(false);
+        setJobId(null);
+        setJobProgress(`Scan failed: ${status.error}`);
+      } else {
+        setJobProgress(status.status === 'running' ? 'Analyzing stocks... (this takes 5-10 min for full scan)' : 'Queued...');
+      }
+    } catch {
+      // ignore poll errors, keep polling
+    }
+  }, [sector, quickMode]);
+
+  useEffect(() => {
+    if (jobId) {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = setInterval(() => pollJob(jobId), 5000);
+    }
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, [jobId, pollJob]);
 
   // Use live data if available, otherwise fall back to localStorage cache
   const data = queryData ?? cachedResults;
@@ -297,11 +346,11 @@ export default function StealthPage() {
   };
 
   const handleStop = () => {
-    if (stealthAbortRef.current) {
-      stealthAbortRef.current.abort();
-      stealthAbortRef.current = null;
-      setIsStealthRunning(false);
-    }
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = null;
+    setIsStealthRunning(false);
+    setJobId(null);
+    setJobProgress('');
   };
 
   return (
@@ -364,13 +413,13 @@ export default function StealthPage() {
 
         <button
           onClick={handleScan}
-          disabled={isFetching || isStealthRunning}
+          disabled={isStealthRunning}
           className={cn(
             'flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 font-semibold text-primary-foreground transition-colors hover:bg-primary/90',
-            (isFetching || isStealthRunning) && 'cursor-not-allowed opacity-50'
+            (isStealthRunning) && 'cursor-not-allowed opacity-50'
           )}
         >
-          {isFetching || isStealthRunning ? (
+          {isStealthRunning ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
               Scanning...
@@ -458,15 +507,24 @@ export default function StealthPage() {
       </div>
 
       {/* Results */}
-      {(isFetching || isStealthRunning) && (
+      {isStealthRunning && (
         <div className="flex flex-col items-center justify-center py-16">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
-          <p className="mt-4 text-lg font-medium">Scanning for stealth accumulation...</p>
-          <p className="text-sm text-muted-foreground">Analyzing broker patterns across all stocks</p>
+          <p className="mt-4 text-lg font-medium">
+            {jobId ? 'Full Scan Running in Background...' : 'Scanning for stealth accumulation...'}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {jobProgress || 'Analyzing broker patterns across all stocks'}
+          </p>
+          {jobId && (
+            <p className="text-xs text-muted-foreground mt-3 font-mono bg-muted/30 px-3 py-1 rounded">
+              Job ID: {jobId} · Polling every 5s
+            </p>
+          )}
         </div>
       )}
 
-      {data && !isFetching && (
+      {data && !isStealthRunning && (
         <div className="space-y-6">
           {/* Summary */}
           <div className="grid gap-4 md:grid-cols-3">
@@ -510,7 +568,7 @@ export default function StealthPage() {
         </div>
       )}
 
-      {!data && !isFetching && (
+      {!data && !isStealthRunning && (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-16">
           <Radar className="h-12 w-12 text-muted-foreground" />
           <h3 className="mt-4 text-xl font-semibold">Ready to Detect Smart Money</h3>

@@ -24,6 +24,12 @@ import requests
 import threading
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+# Background job store for long-running scans (Stealth full scan)
+_stealth_jobs: Dict[str, Dict[str, Any]] = {}
+_stealth_executor = ThreadPoolExecutor(max_workers=1)  # one full scan at a time
 
 
 def _is_nepse_trading_day(dt: datetime | None = None) -> bool:
@@ -747,92 +753,121 @@ async def run_market_scan(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/stealth-scan", response_model=StealthResponse)
+def _build_stealth_response(results) -> StealthResponse:
+    """Convert screener results to StealthResponse (shared by sync + async paths)."""
+    stealth_stocks = []
+    for stock in results:
+        tech_score = stock.pillar4_technical
+        broker_score = stock.pillar1_broker
+        dist_risk = getattr(stock, 'distribution_risk', '') or ''
+
+        # Correct max values: both pillars max at 30
+        MAX_PILLAR = 30.0
+        tech_pct = (tech_score / MAX_PILLAR) * 100 if MAX_PILLAR > 0 else 0
+        broker_pct = (broker_score / MAX_PILLAR) * 100 if MAX_PILLAR > 0 else 0
+
+        # Stealth criteria (Nepal market context):
+        # - Technically weak (< 50%) = price hasn't broken out yet → buy zone
+        # - Strong broker buying (> 55%) = institutional accumulation
+        # - Not being actively distributed (exclude HIGH / CRITICAL sellers)
+        # - Empty dist_risk means broker data unavailable → still include if broker score strong
+        is_distributing = dist_risk in ("HIGH", "CRITICAL")
+        if tech_pct < 50 and broker_pct > 55 and not is_distributing:
+            stealth_stocks.append(StealthStock(
+                symbol=stock.symbol,
+                sector=stock.sector,
+                ltp=stock.ltp,
+                broker_score=broker_score,
+                broker_score_pct=round(broker_pct, 1),
+                technical_score=tech_score,
+                technical_score_pct=round(tech_pct, 1),
+                distribution_risk=dist_risk if dist_risk else "UNKNOWN",
+                broker_profit_pct=getattr(stock, 'broker_profit_pct', 0),
+                buyer_dominance=stock.buyer_dominance_pct,
+            ))
+    sector_map: Dict[str, List[StealthStock]] = {}
+    for stock in stealth_stocks:
+        if stock.sector not in sector_map:
+            sector_map[stock.sector] = []
+        sector_map[stock.sector].append(stock)
+    sectors = []
+    for sector_name, stocks in sorted(sector_map.items(), key=lambda x: -len(x[1])):
+        avg_broker = sum(s.broker_score for s in stocks) / len(stocks) if stocks else 0
+        sectors.append(SectorRotation(
+            sector=sector_name,
+            stock_count=len(stocks),
+            avg_broker_score=round(avg_broker, 1),
+            stocks=stocks,
+        ))
+    return StealthResponse(
+        success=True,
+        timestamp=datetime.now().isoformat(),
+        total_stealth_stocks=len(stealth_stocks),
+        sectors=sectors,
+    )
+
+
+def _run_stealth_job(job_id: str, sector: Optional[str], max_price: Optional[float], quick: bool):
+    """Background worker — runs in thread pool executor."""
+    try:
+        from analysis.master_screener import MasterStockScreener
+        _stealth_jobs[job_id]["status"] = "running"
+        screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
+        results = screener.run_full_analysis(quick_mode=quick)
+        response = _build_stealth_response(results)
+        _stealth_jobs[job_id] = {
+            "status": "done",
+            "result": response.dict(),
+            "completed_at": datetime.now().isoformat(),
+        }
+        logger.info(f"Stealth job {job_id} done: {response.total_stealth_stocks} stocks found")
+    except Exception as e:
+        logger.error(f"Stealth job {job_id} failed: {e}")
+        _stealth_jobs[job_id] = {"status": "error", "error": str(e)}
+
+
+@router.get("/stealth-scan")
 async def run_stealth_scan(
     sector: Optional[str] = Query(None),
     max_price: Optional[float] = Query(None),
-    quick: bool = Query(default=False, description="Quick scan uses live market data only (fast). Full scan fetches per-stock history for deeper analysis (slow, 5-10 min)."),
+    quick: bool = Query(default=False, description="Quick scan uses live market data only (~30s). Full scan per-stock history (~5-10 min) runs in background — poll /stealth-scan/status/{job_id}."),
 ):
     """
-    Run the Stealth Radar - Detect Smart Money Accumulation.
-    
-    Finds stocks where:
-    - Technical Score is LOW (price hasn't broken out)
-    - Broker Score is HIGH (heavy institutional buying)
-    - Distribution Risk is LOW (brokers not selling)
-    
-    quick=False (default): full per-stock history analysis (~5-10 min from cloud)
-    quick=True: live market data only, much faster (~30 sec) but less precise
+    Stealth Radar - Detect Smart Money Accumulation.
+    quick=True  → returns results immediately (fast, less precise).
+    quick=False → starts background job, returns {job_id, status:'pending'}.
+                  Poll /api/stealth-scan/status/{job_id} every 5s for results.
     """
     try:
         from analysis.master_screener import MasterStockScreener
-        
         logger.info(f"API Stealth Scan: sector={sector}, quick={quick}")
-        
-        # Initialize screener
-        screener = MasterStockScreener(
-            strategy="momentum",
-            target_sector=sector,
-            max_price=max_price
-        )
-        
-        results = screener.run_full_analysis(quick_mode=quick)
-        
-        # Filter for stealth criteria
-        stealth_stocks = []
-        for stock in results:
-            tech_score = stock.pillar4_technical
-            broker_score = stock.pillar1_broker
-            dist_risk = getattr(stock, 'distribution_risk', 'N/A')
-            
-            # Stealth criteria: Low tech (<40%), High broker (>80%), Low risk
-            max_tech = 40.0  # Max for momentum
-            max_broker = 30.0
-            
-            tech_pct = (tech_score / max_tech) * 100 if max_tech > 0 else 0
-            broker_pct = (broker_score / max_broker) * 100 if max_broker > 0 else 0
-            
-            if tech_pct < 40 and broker_pct > 70 and dist_risk == "LOW":
-                stealth_stocks.append(StealthStock(
-                    symbol=stock.symbol,
-                    sector=stock.sector,
-                    ltp=stock.ltp,
-                    broker_score=broker_score,
-                    broker_score_pct=broker_pct,
-                    technical_score=tech_score,
-                    technical_score_pct=tech_pct,
-                    distribution_risk=dist_risk,
-                    broker_profit_pct=getattr(stock, 'broker_profit_pct', 0),
-                    buyer_dominance=stock.buyer_dominance_pct,
-                ))
-        
-        # Group by sector
-        sector_map: Dict[str, List[StealthStock]] = {}
-        for stock in stealth_stocks:
-            if stock.sector not in sector_map:
-                sector_map[stock.sector] = []
-            sector_map[stock.sector].append(stock)
-        
-        sectors = []
-        for sector_name, stocks in sorted(sector_map.items(), key=lambda x: -len(x[1])):
-            avg_broker = sum(s.broker_score for s in stocks) / len(stocks) if stocks else 0
-            sectors.append(SectorRotation(
-                sector=sector_name,
-                stock_count=len(stocks),
-                avg_broker_score=round(avg_broker, 1),
-                stocks=stocks,
-            ))
-        
-        return StealthResponse(
-            success=True,
-            timestamp=datetime.now().isoformat(),
-            total_stealth_stocks=len(stealth_stocks),
-            sectors=sectors,
-        )
-        
+
+        if quick:
+            # Quick mode: runs in ~30s, safe to do synchronously
+            screener = MasterStockScreener(strategy="momentum", target_sector=sector, max_price=max_price)
+            results = screener.run_full_analysis(quick_mode=True)
+            return _build_stealth_response(results)
+        else:
+            # Full mode: 5-10 min — run in background, return job_id immediately
+            job_id = uuid.uuid4().hex[:10]
+            _stealth_jobs[job_id] = {"status": "pending", "started_at": datetime.now().isoformat()}
+            _stealth_executor.submit(_run_stealth_job, job_id, sector, max_price, False)
+            logger.info(f"Stealth full scan started as background job {job_id}")
+            return {"success": True, "status": "pending", "job_id": job_id,
+                    "message": "Full scan started. Poll /api/stealth-scan/status/{job_id} every 5s."}
     except Exception as e:
         logger.error(f"Stealth scan failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stealth-scan/status/{job_id}")
+async def get_stealth_job_status(job_id: str):
+    """Poll background stealth scan job. Returns status: pending|running|done|error."""
+    job = _stealth_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found. It may have expired.")
+    return job
+
 
 
 # Cache for market regime data (15 minute TTL - due to high Azure→Nepal latency)
@@ -2201,9 +2236,16 @@ async def get_ipo_exit_analysis(symbol: str):
                         volumes = list(vt.get("volumes", []))
                         today_label = datetime.now().strftime("%Y-%m-%d")
                         if dates and dates[-1] == today_label:
-                            # Update existing today entry
-                            if volumes:
-                                volumes[-1] = live_volume
+                            if _is_nepse_trading_day():
+                                # Trading day: update with fresh live volume
+                                if volumes:
+                                    volumes[-1] = live_volume
+                            else:
+                                # Not a trading day: historical API returned stale "today" row
+                                # (e.g. Friday showing Thursday volume again) — remove it
+                                dates.pop()
+                                if volumes:
+                                    volumes.pop()
                         elif _is_nepse_trading_day():
                             # Only append today if it is actually a trading day (Sun–Thu Nepal time).
                             # On Fridays/Saturdays the API returns stale yesterday volume which

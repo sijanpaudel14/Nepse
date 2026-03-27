@@ -90,7 +90,12 @@ export async function runStealthScan(params: StealthParams = {}, signal?: AbortS
   if (params.maxPrice) searchParams.set('max_price', String(params.maxPrice));
   if (params.quick !== undefined) searchParams.set('quick', String(params.quick));
 
-  return fetchAPI<StealthResponse>(`/api/stealth-scan?${searchParams}`, { signal });
+  // Returns StealthResponse (quick) OR {status:'pending', job_id} (full scan)
+  return fetchAPI<StealthResponse | StealthJobPending>(`/api/stealth-scan?${searchParams}`, { signal });
+}
+
+export async function pollStealthJob(jobId: string): Promise<StealthJobStatus> {
+  return fetchAPI<StealthJobStatus>(`/api/stealth-scan/status/${jobId}`);
 }
 
 // Market Regime
@@ -315,6 +320,21 @@ export interface StealthResponse {
   timestamp: string;
   total_stealth_stocks: number;
   sectors: SectorRotation[];
+}
+
+export interface StealthJobPending {
+  success: boolean;
+  status: 'pending';
+  job_id: string;
+  message: string;
+}
+
+export interface StealthJobStatus {
+  status: 'pending' | 'running' | 'done' | 'error';
+  started_at?: string;
+  completed_at?: string;
+  result?: StealthResponse;
+  error?: string;
 }
 
 export interface MarketRegimeResponse {
