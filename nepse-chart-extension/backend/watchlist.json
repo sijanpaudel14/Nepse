@@ -1,0 +1,126 @@
+{
+  "saved_at": "2026-03-31T11:11:21.589928+00:00",
+  "total_scanned": 97,
+  "stocks": [
+    {
+      "symbol": "TAMOR",
+      "company_name": "Sanima Middle Tamor Hydropower Limited",
+      "sector": "Hydro Power",
+      "current_price": 458.0,
+      "suggested_sl": 439.12,
+      "suggested_target": 495.76,
+      "rr_ratio": 2.0,
+      "checklist_score": 12,
+      "entry_status": "ENTRY ZONE",
+      "composite_score": 76.2
+    },
+    {
+      "symbol": "SGHC",
+      "company_name": "Swet-Ganga Hydropower and Construction Limited",
+      "sector": "Hydro Power",
+      "current_price": 423.0,
+      "suggested_sl": 399.4,
+      "suggested_target": 470.2,
+      "rr_ratio": 2.0,
+      "checklist_score": 11,
+      "entry_status": "WAIT",
+      "composite_score": 91.1
+    },
+    {
+      "symbol": "NYADI",
+      "company_name": "Nyadi hydropower limited",
+      "sector": "Hydro Power",
+      "current_price": 427.3,
+      "suggested_sl": 393.51,
+      "suggested_target": 481.04,
+      "rr_ratio": 1.59,
+      "checklist_score": 11,
+      "entry_status": "WAIT",
+      "composite_score": 82.0
+    },
+    {
+      "symbol": "AKPL",
+      "company_name": "Arun Kabeli Power Ltd.",
+      "sector": "Hydro Power",
+      "current_price": 285.0,
+      "suggested_sl": 260.48,
+      "suggested_target": 334.04,
+      "rr_ratio": 2.0,
+      "checklist_score": 11,
+      "entry_status": "WAIT",
+      "composite_score": 80.6
+    },
+    {
+      "symbol": "SJCL",
+      "company_name": "SANJEN JALAVIDHYUT COMPANY LTD",
+      "sector": "Hydro Power",
+      "current_price": 334.8,
+      "suggested_sl": 308.38,
+      "suggested_target": 387.64,
+      "rr_ratio": 2.0,
+      "checklist_score": 11,
+      "entry_status": "WAIT",
+      "composite_score": 78.8
+    },
+    {
+      "symbol": "SHEL",
+      "company_name": "Singati Hydro Energy Ltd",
+      "sector": "Hydro Power",
+      "current_price": 329.0,
+      "suggested_sl": 296.1,
+      "suggested_target": 394.8,
+      "rr_ratio": 2.0,
+      "checklist_score": 10,
+      "entry_status": "WAIT",
+      "composite_score": 78.8
+    },
+    {
+      "symbol": "SPDL",
+      "company_name": "Synergy Power Development Ltd.",
+      "sector": "Hydro Power",
+      "current_price": 430.9,
+      "suggested_sl": 394.21,
+      "suggested_target": 504.28,
+      "rr_ratio": 2.0,
+      "checklist_score": 10,
+      "entry_status": "ENTRY ZONE",
+      "composite_score": 76.7
+    },
+    {
+      "symbol": "KKHC",
+      "company_name": "Khanikhola Hydropower Co. Ltd.",
+      "sector": "Hydro Power",
+      "current_price": 274.0,
+      "suggested_sl": 246.6,
+      "suggested_target": 326.85,
+      "rr_ratio": 1.93,
+      "checklist_score": 10,
+      "entry_status": "WAIT",
+      "composite_score": 76.4
+    },
+    {
+      "symbol": "MHL",
+      "company_name": "Mandakini Hydropower Limited",
+      "sector": "Hydro Power",
+      "current_price": 535.0,
+      "suggested_sl": 509.98,
+      "suggested_target": 585.04,
+      "rr_ratio": 2.0,
+      "checklist_score": 9,
+      "entry_status": "ENTRY ZONE",
+      "composite_score": 74.6
+    },
+    {
+      "symbol": "BHCL",
+      "company_name": "Bikash Hydropower Company Ltd",
+      "sector": "Hydro Power",
+      "current_price": 586.0,
+      "suggested_sl": 539.72,
+      "suggested_target": 678.56,
+      "rr_ratio": 2.0,
+      "checklist_score": 9,
+      "entry_status": "ENTRY ZONE",
+      "composite_score": 73.3
+    }
+  ]
+}

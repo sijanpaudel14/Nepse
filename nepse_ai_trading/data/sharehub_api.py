@@ -387,8 +387,6 @@ class ShareHubAPI:
 
         # Token expiry tracking
         self._token_expiry: Optional[datetime] = None
-        self._firebase_api_key = os.getenv(
-            "FIREBASE_API_KEY", "AIzaSyCIxrLiH2x_p8IoS7wJhpWS1_thnvKLIUI")
 
         # Default headers
         self.session.headers.update({
@@ -437,91 +435,6 @@ class ShareHubAPI:
             return True  # Can't verify, assume valid
         # Add 1 minute buffer
         return datetime.now() < (self._token_expiry - timedelta(minutes=1))
-
-    def refresh_token_with_firebase(
-        self,
-        email: str = None,
-        password: str = None,
-    ) -> Optional[str]:
-        """
-        🔑 REFRESH AUTH TOKEN using Firebase.
-
-        ShareHub uses Firebase Authentication. To get a fresh token:
-        1. Authenticate with Firebase using email/password
-        2. Get ID token from Firebase
-        3. Exchange for ShareHub token
-
-        Set environment variables:
-        - SHAREHUB_EMAIL: Your ShareHub login email
-        - SHAREHUB_PASSWORD: Your ShareHub password
-        - FIREBASE_API_KEY: Firebase API key (default provided)
-
-        Returns:
-            New auth token or None if failed
-        """
-        email = email or os.getenv("SHAREHUB_EMAIL")
-        password = password or os.getenv("SHAREHUB_PASSWORD")
-
-        if not email or not password:
-            logger.error("Email and password required for token refresh!")
-            logger.info(
-                "Set SHAREHUB_EMAIL and SHAREHUB_PASSWORD environment variables")
-            return None
-
-        try:
-            # Step 1: Authenticate with Firebase
-            firebase_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self._firebase_api_key}"
-
-            firebase_resp = requests.post(
-                firebase_url,
-                json={
-                    "email": email,
-                    "password": password,
-                    "returnSecureToken": True,
-                },
-                timeout=15,
-            )
-            firebase_resp.raise_for_status()
-            firebase_data = firebase_resp.json()
-
-            id_token = firebase_data.get("idToken")
-            if not id_token:
-                logger.error("No idToken in Firebase response")
-                return None
-
-            logger.info("✅ Firebase authentication successful")
-
-            # Step 2: Exchange Firebase token for ShareHub token
-            sharehub_auth_url = f"{self.BASE_URL}/users/api/v1/authenticate/firebase"
-
-            sharehub_resp = requests.post(
-                sharehub_auth_url,
-                json={"accessToken": id_token},
-                headers={
-                    "accept": "application/json",
-                    "content-type": "application/json",
-                },
-                timeout=15,
-            )
-            sharehub_resp.raise_for_status()
-            sharehub_data = sharehub_resp.json()
-
-            if sharehub_data.get("success"):
-                new_token = sharehub_data.get("data", {}).get("accessToken")
-                if new_token:
-                    self.set_auth_token(new_token)
-                    self._parse_token_expiry()
-                    logger.info("✅ ShareHub token refreshed successfully!")
-                    logger.info(f"   Token expires at: {self._token_expiry}")
-                    return new_token
-
-            logger.error(
-                f"ShareHub auth failed: {sharehub_data.get('message')}")
-            return None
-
-        except requests.RequestException as e:
-            logger.error(f"Token refresh failed: {e}")
-            return None
 
     def login(self) -> bool:
         """

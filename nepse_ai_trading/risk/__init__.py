@@ -1,15 +1,16 @@
 """
 Risk Management Module.
 
-Provides position sizing, portfolio management, and risk limits
-to protect capital and maximize long-term growth.
+Provides position sizing, portfolio management, risk limits,
+ATR-based dynamic stops, trailing stops, and portfolio risk enforcement.
 
-MILLIONAIRE RULES (embedded in this module):
+RULES:
 1. Never risk more than 2% per trade
-2. Max 5-7 positions at once
+2. Max 5 concurrent positions
 3. Max 30% in single sector
 4. Stop trading at 20% drawdown
-5. Review after 5 consecutive losses
+5. Min 20% cash reserve
+6. T+2 settlement: no exit within 3 trading days
 """
 
 from .position_sizer import (
@@ -35,6 +36,19 @@ from .risk_limits import (
     check_risk,
 )
 
+from .atr_stops import (
+    StopState,
+    create_stop_state,
+    update_stop_state,
+    compute_initial_stop,
+    compute_trailing_stop,
+)
+
+from .portfolio_risk_engine import (
+    PortfolioRiskEngine,
+    PreTradeResult,
+)
+
 __all__ = [
     # Position sizing
     "PositionSizer",
@@ -53,4 +67,13 @@ __all__ = [
     "RiskState",
     "RiskAlert",
     "check_risk",
+    # ATR Stops
+    "StopState",
+    "create_stop_state",
+    "update_stop_state",
+    "compute_initial_stop",
+    "compute_trailing_stop",
+    # Portfolio Risk Engine
+    "PortfolioRiskEngine",
+    "PreTradeResult",
 ]

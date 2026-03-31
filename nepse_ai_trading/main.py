@@ -22,6 +22,7 @@ from core.exceptions import NepseAIException
 
 from data.fetcher import NepseFetcher, save_prices_to_db
 from analysis.screener import StockScreener
+from analysis.master_screener import MasterStockScreener, ScreenedStock
 from intelligence.signal_aggregator import SignalAggregator, FinalSignal
 from notifications.telegram_bot import send_telegram_alert, send_daily_summary
 
@@ -41,7 +42,7 @@ def run_data_fetch() -> bool:
         fetcher = NepseFetcher()
         
         # Fetch today's prices
-        df = fetcher.fetch_today_prices()
+        df = fetcher.fetch_live_market()
         
         if df.empty:
             logger.warning("No price data received. Market may be closed.")
@@ -63,82 +64,104 @@ def run_data_fetch() -> bool:
         return False
 
 
-def run_screener() -> list:
+def run_screener(strategy: str = "value", sector: str = None, quick_mode: bool = False) -> list:
     """
-    Run the multi-strategy screener.
-    
+    Run the 4-Pillar Master Screener.
+
     Returns:
-        List of ScreenerResults
+        List of ScreenedStock objects
     """
     logger.info("=" * 50)
-    logger.info("STEP 2: Running technical analysis screener...")
+    logger.info("STEP 2: Running 4-Pillar Master Screener...")
     logger.info("=" * 50)
-    
+
     try:
-        screener = StockScreener()
-        results = screener.screen_all(min_confidence=5.5)
-        
+        screener = MasterStockScreener(strategy=strategy, target_sector=sector)
+        results = screener.run_full_analysis(min_score=60, top_n=10, quick_mode=quick_mode)
+
         if not results:
-            logger.info("No stocks passed screening criteria today.")
+            logger.info("No stocks passed scoring criteria today.")
             return []
-        
-        logger.info(f"Found {len(results)} potential signals")
-        
+
+        logger.info(f"Found {len(results)} high-scoring stocks (score >= 60)")
+
         # Log top signals
-        for i, result in enumerate(results[:5], 1):
-            signal = result.primary_signal
+        for i, stock in enumerate(results[:5], 1):
             logger.info(
-                f"  {i}. {result.symbol}: {signal.strategy_name} "
-                f"(confidence: {signal.confidence:.1f}/10)"
+                f"  {i}. {stock.symbol}: {stock.recommendation} "
+                f"(score: {stock.total_score:.1f}/100 | CSS: {getattr(stock, 'css_score', 'N/A')})"
             )
-        
+
         return results
-        
+
     except Exception as e:
-        logger.error(f"Screener failed: {e}")
+        logger.error(f"Master screener failed: {e}")
         return []
 
 
 def run_intelligence(results: list) -> list:
     """
-    Run news scraping and AI analysis.
-    
+    Convert MasterStockScreener results into FinalSignal objects.
+    MasterStockScreener already performs comprehensive analysis (4 pillars + manipulation
+    detection + distribution risk), so we convert directly without re-running AI analysis.
+
     Args:
-        results: ScreenerResults from screener
-        
+        results: List of ScreenedStock from MasterStockScreener
+
     Returns:
         List of FinalSignals
     """
     logger.info("=" * 50)
-    logger.info("STEP 3: Running intelligence analysis...")
+    logger.info("STEP 3: Preparing final signals...")
     logger.info("=" * 50)
-    
-    try:
-        aggregator = SignalAggregator(
-            use_ai=bool(settings.openai_api_key),
-            scrape_news=True,
-        )
-        
-        signals = aggregator.aggregate_all(results)
-        
-        if not signals:
-            logger.info("No final signals generated.")
-            return []
-        
-        logger.info(f"Generated {len(signals)} final signals")
-        
-        # Log signals by verdict
-        for verdict in ["STRONG_BUY", "BUY", "RISKY"]:
-            matching = [s for s in signals if s.final_verdict == verdict]
-            if matching:
-                symbols = ", ".join(s.symbol for s in matching)
-                logger.info(f"  {verdict}: {symbols}")
-        
-        return signals
-        
-    except Exception as e:
-        logger.error(f"Intelligence analysis failed: {e}")
-        return []
+
+    from datetime import date as date_cls
+
+    signals = []
+
+    for stock in results:
+        try:
+            # Map master screener recommendation to FinalSignal verdict
+            verdict_map = {
+                "STRONG BUY": "STRONG_BUY",
+                "BUY": "BUY",
+                "WEAK BUY": "BUY",
+                "SPECULATIVE": "HOLD",
+            }
+            verdict = verdict_map.get(stock.recommendation.upper(), "HOLD")
+
+            signal = FinalSignal(
+                symbol=stock.symbol,
+                date=date_cls.today(),
+                ta_confidence=stock.pillar4_technical / 3.0,  # /30 * 10 → score out of 10
+                primary_strategy="MasterScreener",
+                pe_ratio=stock.pe_ratio,
+                pb_ratio=stock.pbv,
+                roe=stock.roe,
+                eps=stock.eps,
+                final_verdict=verdict,
+                final_confidence=stock.total_score / 10.0,  # 0-10 scale
+                entry_price=stock.entry_price_with_slippage,
+                target_price=stock.target_price,
+                stop_loss=stock.stop_loss_with_slippage,
+                risk_reward_ratio=stock.risk_reward_ratio,
+                reasoning=stock.verdict_reason,
+            )
+            signals.append(signal)
+        except Exception as e:
+            logger.error(f"Failed to convert signal for {getattr(stock, 'symbol', '?')}: {e}")
+            continue
+
+    signals.sort(key=lambda s: s.final_confidence, reverse=True)
+    logger.info(f"Generated {len(signals)} final signals")
+
+    for verdict in ["STRONG_BUY", "BUY", "HOLD"]:
+        matching = [s for s in signals if s.final_verdict == verdict]
+        if matching:
+            syms = ", ".join(s.symbol for s in matching)
+            logger.info(f"  {verdict}: {syms}")
+
+    return signals
 
 
 def run_notifications(signals: list, dry_run: bool = False) -> None:
@@ -317,10 +340,18 @@ def main():
         elif args.screen_only:
             init_db()
             results = run_screener()
-            
-            # Print formatted results
-            screener = StockScreener()
-            print(screener.format_results(results))
+
+            # Print formatted results using ScreenedStock fields
+            if results:
+                print("\n📊 NEPSE MASTER SCREENER RESULTS")
+                print("=" * 50)
+                for i, stock in enumerate(results, 1):
+                    css_str = f" | CSS: {stock.css_score:.2f}" if hasattr(stock, "css_score") and stock.css_score else ""
+                    print(f"\n{i}. {stock.symbol} — {stock.recommendation} ({stock.total_score:.1f}/100){css_str}")
+                    print(f"   Entry: Rs.{stock.entry_price_with_slippage:.2f} | Target: Rs.{stock.target_price:.2f} | SL: Rs.{stock.stop_loss_with_slippage:.2f}")
+                    print(f"   {stock.verdict_reason}")
+            else:
+                print("No stocks passed screening criteria today.")
         
         elif args.schedule:
             # Run as scheduled daemon

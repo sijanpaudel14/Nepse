@@ -275,35 +275,41 @@ class PositionSizer:
         """
         Kelly Criterion position sizing.
         
-        Mathematically optimal but VERY aggressive. We use Half-Kelly.
+        Mathematically optimal but VERY aggressive. We use Quarter-Kelly.
         
         Formula: Kelly% = W - (1-W)/R
-        Where W = win rate, R = profit factor
+        Where W = win rate (decimal 0-1), R = profit factor
         
         WARNING: Full Kelly can cause huge drawdowns!
-        We use Half-Kelly (Kelly / 2) for safety.
+        We use Quarter-Kelly (Kelly / 4) for safety.
         """
         if risk_per_share <= 0 or win_rate <= 0:
             return 0, 0
         
-        # Kelly percentage (using simplified formula)
-        w = win_rate / 100  # Convert to decimal
-        r = profit_factor
+        # Normalize win_rate: accept both percentage (55) and decimal (0.55)
+        if win_rate > 1.0:
+            w = win_rate / 100  # Convert percentage to decimal
+        else:
+            w = win_rate
+        
+        # Validate bounds
+        w = max(0.01, min(0.99, w))
+        r = max(0.01, profit_factor)
         
         kelly_pct = w - ((1 - w) / r)
         
         # Sanity checks
         kelly_pct = max(0, min(kelly_pct, 0.25))  # Cap at 25%
         
-        # Use Half-Kelly for safety
-        half_kelly_pct = kelly_pct / 2
+        # Use Quarter-Kelly for safety (more conservative than Half-Kelly)
+        quarter_kelly_pct = kelly_pct / 4
         
         # Apply to portfolio
-        position_value = self.portfolio_value * half_kelly_pct
+        position_value = self.portfolio_value * quarter_kelly_pct
         shares = position_value / entry_price
         risk_amount = shares * risk_per_share
         
-        logger.debug(f"Kelly: {kelly_pct:.1%} → Half-Kelly: {half_kelly_pct:.1%}")
+        logger.debug(f"Kelly: {kelly_pct:.1%} → Quarter-Kelly: {quarter_kelly_pct:.1%}")
         
         return int(shares), risk_amount
     

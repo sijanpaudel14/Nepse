@@ -222,10 +222,15 @@ class SignalAggregator:
                     final.roe = analysis.fundamentals.roe
                     final.eps = analysis.fundamentals.eps
                     
-                    # Determine valuation
-                    if pe < 15 and pb < 2:
+                    # SECTOR-SPECIFIC valuation (not blanket PE < 15)
+                    from core.config import settings as _settings
+                    sector = getattr(analysis.fundamentals, 'sector', '') or ''
+                    sector_pe_med = _settings.sector_pe_medians.get(sector, 20)
+                    sector_pbv_med = _settings.sector_pbv_medians.get(sector, 1.5)
+                    
+                    if pe > 0 and pe < sector_pe_med * 0.8 and pb > 0 and pb < sector_pbv_med:
                         final.valuation_verdict = "UNDERVALUED"
-                    elif pe > 30 or pb > 4:
+                    elif pe > sector_pe_med * 1.5 or pb > sector_pbv_med * 2.5:
                         final.valuation_verdict = "OVERVALUED"
                     else:
                         final.valuation_verdict = "FAIR"

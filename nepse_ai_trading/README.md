@@ -1,60 +1,90 @@
-# NEPSE AI Swing Trading Bot 🚀
+# NEPSE AI Quantitative Trading System 🚀
 
-🤖 A production-grade, AI-powered trading assistant for Nepal Stock Exchange (NEPSE).
+🤖 A production-grade, AI-powered quantitative trading system for Nepal Stock Exchange (NEPSE).
 
 ## 🎯 Features
 
+### Composite Signal Score (CSS) Engine — NEW
+
+- 📊 **6-Component Scoring** — Trend + Momentum + Volume + Volatility + Operator + Fundamental
+- 🎯 **3 Trading Profiles** — Short-term, Swing, Investment (different weight sets)
+- 📉 **Signal Freshness Decay** — Stale data automatically penalized (0.8^days)
+- 🔬 **22 Quantitative Indicators** — MEIS (Minimal Effective Indicator Set) in one call
+- 🕵️ **Operator Cycle Detection** — 14-21 day pump/dump pattern recognition
+
 ### Trading Intelligence
 
-- 📊 **5 Swing Trading Strategies** - Golden Cross, Volume Breakout, RSI Divergence, Support Bounce
-- 🧠 **AI-Powered Analysis** - GPT-4o-mini validates signals and analyzes news sentiment
-- 📰 **News Scraping** - Automatic collection from ShareSansar & Merolagani
-- ⚡ **Real-time Screening** - Parallel analysis of all NEPSE stocks
+- 📊 **5 Swing Trading Strategies** — Golden Cross, Volume Breakout, RSI Divergence, Support Bounce
+- 🧠 **AI-Powered Analysis** — GPT-4o-mini validates signals and analyzes news sentiment
+- 📰 **News Scraping** — Automatic collection from ShareSansar & Merolagani
+- ⚡ **Real-time Screening** — Parallel analysis of all NEPSE stocks
 
-### Fundamental Analysis (NEW!)
+### Fundamental Analysis
 
-- 📈 **Valuation Metrics** - PE Ratio, PB Ratio, EPS, Book Value, ROE, Market Cap
-- 🏦 **Broker Analysis** - Floor sheet analysis showing top buyers/sellers
-- 📊 **Market Depth** - Bid/ask levels, spread, order imbalance
-- 💹 **Corporate Actions** - Dividend history, bonus/right share tracking
-- 📑 **Financial Reports** - Q1/Q2/Q3/Annual report scraping
-- 🔍 **Comprehensive Scoring** - Combined TA + FA scoring for better decisions
+- 📈 **Sector-Specific Valuations** — PE/PBV benchmarks per NEPSE sector (no more blanket PE<15)
+- 🏦 **Broker Intelligence** — 30/60/90 day broker profile tracking
+- 🕸️ **Syndicate Detection** — Cross-broker coordination algorithm
+- 📊 **Floorsheet HHI** — Concentration tracking per stock
+- 🏛️ **NRB Macro Scoring** — Interbank rate, CCD ratio, inflation impact
 
-### Risk Management
+### Risk Management — Hard Enforcement
 
-- 💰 **Position Sizing** - Kelly Criterion & fixed fractional methods
-- 📉 **Drawdown Protection** - Automatic trading halt at 20% drawdown
-- 🎛️ **Portfolio Management** - Max 5 positions, 30% sector limit
-- 🛑 **Circuit Breakers** - Daily loss limits, consecutive loss protection
+- 🛡️ **8-Gate Pre-Trade Check** — Daily loss, drawdown, position limits, sector caps (ENFORCED, not advisory)
+- 📉 **ATR Dynamic Stops** — Entry - 2×ATR, progressive trailing (tightens with profit)
+- 💰 **Quarter-Kelly Sizing** — Conservative Kelly criterion for NEPSE's thin markets
+- 💾 **Position Persistence** — Positions survive restarts via SQLite storage
+- 🚨 **Circuit Breaker Proximity** — CSS penalty when stock nears ±10% circuit limit
+- ⏰ **T+2 Settlement Aware** — Blocks premature exits
+
+### Institutional-Grade Backtesting
+
+- 📈 **CSS Backtesting** — Test CSS signals with realistic NEPSE costs
+- 🔄 **Walk-Forward Validation** — 6-month train / 2-month test rolling windows
+- 🎲 **Monte Carlo Testing** — Statistical significance with p-values
+- ⚖️ **Strategy Comparison** — All strategies + CSS profiles ranked side-by-side
+- 💸 **Realistic Cost Model** — 0.36% broker + 0.015% SEBON + Rs.25 DP + volume slippage
+
+### Market Intelligence
+
+- 🌡️ **Market Breadth History** — Persisted A/D data with multi-day divergence detection
+- 🏭 **Sector Rotation** — Dampened extrapolation with seasonal calendar
+- 💰 **Smart Money Tracking** — Institutional flow scaled by stock turnover
+- 📊 **Market Regime Detection** — BULL/BEAR/PANIC automatic classification
 
 ### Notifications & Interface
 
-- 📲 **Telegram Alerts** - Real-time trading signals with fundamentals
-- 📧 **Email Notifications** - Daily summaries and important alerts
-- 🖥️ **Web Dashboard** - Modern dark-mode UI with live data
-- 📡 **REST API** - Full FastAPI backend with OpenAPI docs
-
-### Backtesting
-
-- 📈 **Strategy Validation** - Test before risking real capital
-- 📊 **Performance Metrics** - Sharpe ratio, max drawdown, profit factor
-- 🔧 **Parameter Optimization** - Grid search with overfitting protection
-- 📅 **Walk-Forward Testing** - Ensures parameters work across time periods
+- 📲 **Telegram Alerts** — Real-time trading signals with fundamentals
+- 📧 **Email Notifications** — Daily summaries and important alerts
+- 🖥️ **Web Dashboard** — Modern dark-mode UI with live data
+- 📡 **REST API** — Full FastAPI backend with OpenAPI docs
 
 ## 🏗️ Architecture
 
 ```
 nepse_ai_trading/
 ├── core/               # Config, database, logging, exceptions
-├── data/               # NEPSE API integration & data cleaning
-├── analysis/           # Technical + Fundamental analysis
+├── data/               # NEPSE API integration & data cleaning (bulk upserts)
+├── analysis/           # Technical + Fundamental + CSS scoring
 │   ├── strategies/     # Individual TA strategy implementations
-│   ├── fundamentals.py # PE, PB, ROE, Broker analysis
-│   ├── corporate_actions.py  # Dividends, bonus, rights
-│   └── financial_reports.py  # Q1-Q4 report scraping
-├── backtesting/        # Backtesting engine & metrics
-├── risk/               # Position sizing, portfolio, risk limits
-├── intelligence/       # News scraping & AI analysis
+│   ├── quant_indicators.py  # MEIS — 22 indicators, one call
+│   ├── signal_scorer.py     # CSS — 6-component composite scoring
+│   ├── fundamentals.py      # PE, PB, ROE, Broker analysis
+│   ├── corporate_actions.py # Dividends, bonus, rights
+│   └── financial_reports.py # Q1-Q4 report scraping
+├── backtesting/        # CSS backtest, walk-forward, Monte Carlo, comparison
+├── risk/               # ATR stops, portfolio risk engine, position persistence
+│   ├── atr_stops.py         # Dynamic ATR stops + progressive trailing
+│   ├── portfolio_risk_engine.py  # 8-gate pre-trade check (ENFORCED)
+│   ├── position_sizer.py   # Quarter-Kelly + alternatives
+│   └── portfolio_manager.py # Position tracking
+├── intelligence/       # News, AI, brokers, syndicate, macro, breadth
+│   ├── broker_profiles.py   # 30/60/90 day broker tracking
+│   ├── syndicate_detector.py    # Cross-broker coordination
+│   ├── floorsheet_tracker.py    # HHI concentration
+│   ├── macro_engine.py      # NRB macro scoring
+│   ├── market_breadth.py    # Breadth history + divergence
+│   ├── operator_cycle.py    # Pump/dump cycle detection
+│   └── ...                  # News, AI, sentiment, sector rotation
 ├── notifications/      # Telegram & email integration
 ├── api/                # FastAPI backend
 ├── web/                # Dashboard templates & static files
@@ -153,16 +183,19 @@ docker-compose down
 | **RSI Divergence**  | Price lower low + RSI higher low | RSI crosses above 30         |
 | **Support Bounce**  | Price touches support level      | Bullish rejection candle     |
 
-## 💰 Risk Management Rules
+## 💰 Risk Management Rules (ENFORCED)
 
-| Rule             | Setting | Rationale                              |
-| ---------------- | ------- | -------------------------------------- |
-| Risk per trade   | 2% max  | 10 losses in a row = 20% drawdown      |
-| Max positions    | 5       | Diversification without over-spreading |
-| Sector limit     | 30%     | Avoid sector concentration risk        |
-| Min price        | Rs. 200 | Avoid penny stock manipulation         |
-| Daily loss limit | 3%      | Stop trading after bad day             |
-| Max drawdown     | 20%     | Halt trading, review strategy          |
+| Rule             | Setting                | Enforcement                                   |
+| ---------------- | ---------------------- | --------------------------------------------- |
+| Risk per trade   | 2% max (Quarter-Kelly) | Pre-trade check blocks oversized trades       |
+| Max positions    | 5                      | Pre-trade check blocks new entries            |
+| Sector limit     | 30%                    | Pre-trade check blocks sector concentration   |
+| Min price        | Rs. 200                | Filtered in screening                         |
+| Daily loss limit | 3%                     | All trading blocked until next day            |
+| Max drawdown     | 20%                    | System halt, manual review required           |
+| Stop-loss        | ATR-based              | Dynamic: Entry - 2×ATR, trails progressively  |
+| T+2 settlement   | 3 day hold             | Cannot sell within 3 trading days of purchase |
+| Circuit breaker  | ±10% daily             | CSS penalty when stock nears limit            |
 
 ## 📡 API Endpoints
 

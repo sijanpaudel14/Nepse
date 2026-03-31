@@ -191,8 +191,9 @@ class SupportBounceStrategy(BaseStrategy):
         # Support bounce: stop just below support level (structure-based)
         stop = round(nearest_support * 0.98, 2)
         
-        # Target: use ATR-based or 8% gain, whichever is more conservative
-        target = min(atr_target, round(entry * 1.08, 2))
+        # Target: use ATR-based target (removed artificial 8% cap that destroyed R:R)
+        # Let ATR determine the appropriate target based on volatility
+        target = atr_target
         
         signal = StrategySignal(
             symbol=symbol,

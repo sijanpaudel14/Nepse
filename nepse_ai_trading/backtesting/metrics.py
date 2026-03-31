@@ -21,11 +21,11 @@ from typing import List, Optional, Dict
 from datetime import date, timedelta
 
 
-# Nepal's ~6.5% risk-free rate (NRB repo rate)
-NEPAL_RISK_FREE_RATE = 0.065
+# Nepal's ~5.5% risk-free rate (NRB T-bill rate as of early 2026)
+NEPAL_RISK_FREE_RATE = 0.055
 
-# NEPSE trading days per year (~200, accounting for weekends + holidays)
-NEPSE_TRADING_DAYS_PER_YEAR = 200
+# NEPSE trading days per year (~230, Sun-Thu minus holidays)
+NEPSE_TRADING_DAYS_PER_YEAR = 230
 
 
 @dataclass

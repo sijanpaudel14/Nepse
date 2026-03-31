@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "NEPSE Chart Analyzer",
+  "version": "1.0.0",
+  "description": "Automatically analyzes NEPSE stock charts on NepseAlpha. Detects candlestick patterns, volume anomalies, and provides BUY/SELL signals — no chart-reading knowledge required.",
+
+  "permissions": ["storage"],
+
+  "action": {
+    "default_title": "NEPSE Chart Analyzer",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "host_permissions": [
+    "https://nepsealpha.com/*",
+    "https://www.nepsealpha.com/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "https://nepse-chart-extension.onrender.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "world": "MAIN",
+      "matches": ["https://nepsealpha.com/*", "https://www.nepsealpha.com/*"],
+      "js": ["inject.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://nepsealpha.com/*", "https://www.nepsealpha.com/*"],
+      "js": ["content_script.js"],
+      "run_at": "document_start"
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["styles.css"],
+      "matches": ["https://nepsealpha.com/*"]
+    }
+  ],
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

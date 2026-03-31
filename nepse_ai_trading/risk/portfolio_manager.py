@@ -102,20 +102,31 @@ class Position:
     
     @property
     def hit_stop_loss(self) -> bool:
-        """Has price hit stop loss? (H4 FIX: with exit slippage buffer)"""
+        """Has price hit stop loss? (with exit slippage buffer)
+        
+        SLIPPAGE FIX: When selling at stop-loss, you get a WORSE price than stop.
+        So the effective stop is HIGHER than the set stop (you need to trigger earlier
+        to account for the worse execution price you'll receive).
+        """
         if self.stop_loss <= 0 or self.current_price <= 0:
             return False
-        # Apply selling slippage - you get worse price (lower) than stop
-        adjusted_stop = self.stop_loss * (1 - settings.slippage_pct)
+        # Adjust stop UPWARD to account for selling slippage
+        # (trigger earlier because actual exit will be worse)
+        adjusted_stop = self.stop_loss * (1 + settings.slippage_pct)
         return self.current_price <= adjusted_stop
     
     @property
     def hit_target(self) -> bool:
-        """Has price hit target? (H4 FIX: with exit slippage buffer)"""
+        """Has price hit target? (with exit slippage buffer)
+        
+        Slippage means you get a LOWER price than expected on sell.
+        So we require price to be ABOVE target + slippage to ensure
+        the actual execution price meets the target.
+        """
         if self.target_price <= 0 or self.current_price <= 0:
             return False
-        # Apply selling slippage - you get worse price than target
-        adjusted_target = self.target_price * (1 - settings.slippage_pct)
+        # Require price above target + slippage buffer
+        adjusted_target = self.target_price * (1 + settings.slippage_pct)
         return self.current_price >= adjusted_target
     
     def update_price(self, price: float):

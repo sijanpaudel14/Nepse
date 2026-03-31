@@ -77,8 +77,8 @@ class Settings(BaseSettings):
     # In illiquid NEPSE stocks, expect 1-2% slippage during volatile times
     slippage_pct: float = 0.015  # 1.5% default slippage
     
-    # Broker commission (NEPSE standard)
-    broker_commission_pct: float = 0.004  # 0.4%
+    # Broker commission (NEPSE standard — 0.36% per side as of 2025)
+    broker_commission_pct: float = 0.0036  # 0.36%
     
     # SEBON fee
     sebon_fee_pct: float = 0.00015  # 0.015%
@@ -87,7 +87,13 @@ class Settings(BaseSettings):
     dp_charge: float = 25.0  # Rs. 25 per transaction
     
     # Total transaction costs (used for position closing calculations)
-    total_transaction_cost_pct: float = 0.00415  # 0.4% broker + 0.015% SEBON
+    total_transaction_cost_pct: float = 0.00375  # 0.36% broker + 0.015% SEBON
+    
+    # ============ NEPSE MARKET CONSTANTS ============
+    # NEPSE trading days/year (~230, Sun-Thu minus holidays)
+    nepse_trading_days_per_year: int = 230
+    # Risk-free rate from NRB T-bill (updated periodically)
+    risk_free_rate: float = 0.055  # 5.5% as of early 2026
     
     # Maximum risk per trade as percentage (for portfolio manager)
     max_risk_per_trade_pct: float = 2.0  # 2% maximum risk per trade
@@ -121,9 +127,42 @@ class Settings(BaseSettings):
     momentum_default: int = 10        # Default for other sectors
     
     # ============ API SETTINGS ============
-    jwt_secret_key: str = "change-this-in-production"
+    # SECURITY: JWT secret MUST be set via environment variable.
+    # Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"
+    jwt_secret_key: str = ""  # Empty = app will generate random key on startup (non-persistent)
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    
+    # ============ SECTOR PE BENCHMARKS ============
+    # Sector-specific valuation thresholds (replaces blanket PE < 15)
+    sector_pe_medians: dict = {
+        "Commercial Banks": 22,
+        "Development Banks": 18,
+        "Finance": 16,
+        "Life Insurance": 30,
+        "Non Life Insurance": 25,
+        "Hydro Power": 35,
+        "Manufacturing And Processing": 20,
+        "Hotels And Tourism": 25,
+        "Trading": 18,
+        "Microfinance": 15,
+        "Investment": 20,
+        "Others": 20,
+    }
+    sector_pbv_medians: dict = {
+        "Commercial Banks": 1.5,
+        "Development Banks": 1.2,
+        "Finance": 1.0,
+        "Life Insurance": 3.0,
+        "Non Life Insurance": 2.0,
+        "Hydro Power": 3.0,
+        "Manufacturing And Processing": 1.5,
+        "Hotels And Tourism": 2.0,
+        "Trading": 1.0,
+        "Microfinance": 1.5,
+        "Investment": 1.5,
+        "Others": 1.5,
+    }
     
     # ============ LOGGING ============
     log_level: str = "INFO"
@@ -160,7 +199,20 @@ def get_settings() -> Settings:
     Cached settings instance. 
     Call this function to get settings throughout the app.
     """
-    return Settings()
+    s = Settings()
+    # SECURITY: If JWT secret is empty, generate a random one (non-persistent across restarts)
+    if not s.jwt_secret_key or s.jwt_secret_key == "change-this-in-production":
+        import secrets
+        import warnings
+        s.jwt_secret_key = secrets.token_urlsafe(64)
+        warnings.warn(
+            "JWT_SECRET_KEY not set in environment! Using random key. "
+            "Tokens will be invalidated on restart. "
+            "Set JWT_SECRET_KEY in .env for production.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return s
 
 
 # Global settings instance for convenience

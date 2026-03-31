@@ -3477,6 +3477,27 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
 def main():
+    # Handle 'expert' subcommand — delegates to expert_analysis.py
+    if len(sys.argv) > 1 and sys.argv[1] == "expert":
+        import subprocess, os as _os
+        _dir = _os.path.dirname(_os.path.abspath(__file__))
+        script = _os.path.join(_dir, "expert_analysis.py")
+        result = subprocess.run([sys.executable, script] + sys.argv[2:])
+        sys.exit(result.returncode)
+
+    # Allow subcommand-style: `nepse stealth` → `--action stealth-scan`
+    _SUBCMD_MAP = {
+        "stealth": "stealth-scan",
+        "scan": "scan",
+        "status": "status",
+        "report": "report",
+        "update": "update",
+        "pending": "pending",
+        "analyze": "analyze",
+    }
+    if len(sys.argv) > 1 and sys.argv[1] in _SUBCMD_MAP and not sys.argv[1].startswith("-"):
+        sys.argv[1:2] = ["--action", _SUBCMD_MAP[sys.argv[1]]]
+
     parser = argparse.ArgumentParser(description="NEPSE Paper Trading Engine")
     parser.add_argument(
         "--action",

@@ -184,15 +184,17 @@ class SmartMoneyTracker:
         - Broker concentration (40%)
         - Weekly flow magnitude (30%)
         - Monthly flow consistency (30%)
+        
+        FIX: Scaled denominators to meaningful thresholds so not every stock gets max score.
         """
         # Concentration score (higher = more institutional)
         conc_score = min(100, top3_pct * 1.5)
         
-        # Weekly flow score
-        flow_1w_score = min(100, abs(net_flow_1w) / 500_000)  # 5Cr = 100
+        # Weekly flow score — 5 Crore (50M) for max score (was 5L which is too low)
+        flow_1w_score = min(100, abs(net_flow_1w) / 50_000_000 * 100)
         
-        # Monthly flow score
-        flow_1m_score = min(100, abs(net_flow_1m) / 2_000_000)  # 20Cr = 100
+        # Monthly flow score — 20 Crore (200M) for max score (was 20L)
+        flow_1m_score = min(100, abs(net_flow_1m) / 200_000_000 * 100)
         
         # Weighted average
         score = (

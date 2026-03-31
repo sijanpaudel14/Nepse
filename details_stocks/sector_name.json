@@ -1,0 +1,76 @@
+{
+    "sectors": [
+        {
+            "id": 37,
+            "sectorDescription": "Commercial Banks",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Rastra Bank"
+        },
+        {
+            "id": 38,
+            "sectorDescription": "Manufacturing And Processing",
+            "activeStatus": "A",
+            "regulatoryBody": "Department of Industry"
+        },
+        {
+            "id": 39,
+            "sectorDescription": "Hotels And Tourism",
+            "activeStatus": "A",
+            "regulatoryBody": "Ministry of Tourism"
+        },
+        {
+            "id": 40,
+            "sectorDescription": "Others",
+            "activeStatus": "A",
+            "regulatoryBody": "N/A"
+        },
+        {
+            "id": 41,
+            "sectorDescription": "Hydro Power",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Hydropower Board"
+        },
+        {
+            "id": 42,
+            "sectorDescription": "Tradings",
+            "activeStatus": "A",
+            "regulatoryBody": "Department of Industry"
+        },
+        {
+            "id": 43,
+            "sectorDescription": "Non Life Insurance",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Insurance Board"
+        },
+        {
+            "id": 44,
+            "sectorDescription": "Development Banks",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Rastra Bank"
+        },
+        {
+            "id": 45,
+            "sectorDescription": "Finance",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Rastra Bank"
+        },
+        {
+            "id": 49,
+            "sectorDescription": "Microfinance",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Rastra Bank"
+        },
+        {
+            "id": 50,
+            "sectorDescription": "Life Insurance",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Insurance Board"
+        },
+        {
+            "id": 52,
+            "sectorDescription": "Investment",
+            "activeStatus": "A",
+            "regulatoryBody": "Nepal Rastra Bank"
+        }
+    ]
+}

@@ -39,6 +39,15 @@ from data.sharehub_api import ShareHubAPI
 from analysis.indicators import TechnicalIndicators, safe_vwap
 from core.config import settings
 
+# CSS Engine (Phase 2) — optional import; falls back gracefully if not available
+try:
+    from analysis.signal_scorer import compute_css, CSSResult
+    from analysis.quant_indicators import QuantIndicators
+    CSS_ENGINE_AVAILABLE = True
+except ImportError:
+    CSS_ENGINE_AVAILABLE = False
+    logger.info("📊 CSS Engine not available — using 4-Pillar score only")
+
 # Thread-local storage for per-thread NepseFetcher / ShareHubAPI instances.
 # httpx.Client and requests.Session are NOT thread-safe — sharing them across
 # ThreadPoolExecutor workers serializes all HTTP calls.  By giving each worker
@@ -199,6 +208,11 @@ class ScreenedStock:
     wash_trading_detected: bool = False       # Wash trading found
     lockup_days_remaining: Optional[int] = None  # Days until promoter unlock
     is_safe_to_trade: bool = True             # Final manipulation verdict
+
+    # CSS (Composite Signal Score) — Phase 2 enhancement
+    css_score: float = 0.0          # 0-1 composite technical score
+    css_signal: str = ""            # STRONG_BUY, BUY, HOLD, SELL, etc.
+    css_confidence: float = 0.0     # 0-100 CSS confidence
     
     # Detailed breakdown
     breakdown: ScoringBreakdown = field(default_factory=ScoringBreakdown)
@@ -2506,7 +2520,48 @@ class MasterStockScreener:
         
         # Generate verdict reason
         result.verdict_reason = self._generate_verdict(result)
-        
+
+        # ===== CSS (Composite Signal Score) — Phase 2 Enhancement =====
+        # Run CSS on the same historical data to get a statistically derived 0-1 score.
+        # This runs after the 4-Pillar score so we can pass broker_data already computed.
+        if CSS_ENGINE_AVAILABLE:
+            try:
+                hist_df = self._fetch_historical_safe(symbol, days=120, min_rows=30)
+                if hist_df is not None and len(hist_df) >= 30:
+                    qi = QuantIndicators(hist_df)
+                    indicators = qi.get_latest_indicators()
+
+                    broker_data = self._broker_accumulation.get(symbol, {})
+                    player_favs = self._player_favorites.get(symbol, {})
+                    dist_risk = self._distribution_risk_cache.get(symbol, {})
+                    if dist_risk:
+                        broker_data = {**broker_data, **dist_risk}
+
+                    has_dividends = bool(self._dividend_history_cache.get(symbol))
+
+                    css_result = compute_css(
+                        symbol=symbol,
+                        indicators=indicators,
+                        profile="swing",
+                        broker_data=broker_data,
+                        player_favorites=player_favs,
+                        pe=result.pe_ratio,
+                        roe=result.roe,
+                        sector=result.sector,
+                        has_dividend_history=has_dividends,
+                        market_regime=self._market_regime,
+                    )
+                    result.css_score = css_result.css
+                    result.css_signal = css_result.signal
+                    result.css_confidence = css_result.confidence
+                    result.breakdown.bonuses.append(
+                        f"📐 CSS Score: {css_result.css:.3f} [{css_result.signal}] "
+                        f"(T={css_result.trend_score:.2f} M={css_result.momentum_score:.2f} "
+                        f"V={css_result.volume_score:.2f} Op={css_result.operator_score:.2f})"
+                    )
+            except Exception as e:
+                logger.debug(f"{symbol}: CSS computation failed — {e}")
+
         return result
     
     def _score_pillar1_broker(self, symbol: str, max_score: float = 30.0) -> Tuple[float, List[str]]:

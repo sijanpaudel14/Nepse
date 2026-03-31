@@ -753,10 +753,10 @@ class ManipulationDetector:
             # If close is significantly different from day's VWAP → suspicious
             today = df.iloc[-1]
             
-            high = today.get('high', 0)
-            low = today.get('low', 0)
-            close = today.get('close', 0)
-            open_price = today.get('open', 0)
+            high = today.get('high') or 0
+            low = today.get('low') or 0
+            close = today.get('close') or 0
+            open_price = today.get('open') or 0
             
             if high == 0 or low == 0:
                 result.description = "Invalid price data"

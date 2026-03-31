@@ -21,11 +21,17 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from enum import Enum
 from loguru import logger
 import pandas as pd
+
+try:
+    from core.database import DailyBreadth, get_session
+except ImportError:
+    DailyBreadth = None
+    get_session = None
 
 try:
     from data.fetcher import NepseFetcher
@@ -398,6 +404,127 @@ class MarketBreadthAnalyzer:
         lines.append("=" * 60)
         
         return "\n".join(lines)
+
+    def save_breadth_snapshot(self, snapshot: MarketBreadthSnapshot = None) -> bool:
+        """
+        Persist today's breadth snapshot to DB for historical divergence detection.
+        Phase 5.6: Market breadth history.
+        """
+        if DailyBreadth is None or get_session is None:
+            logger.warning("DailyBreadth model or get_session not available")
+            return False
+
+        if snapshot is None:
+            snapshot = self.get_market_breadth()
+
+        today = date.today()
+        try:
+            session = get_session()
+            existing = session.query(DailyBreadth).filter_by(date=today).first()
+            if existing:
+                existing.total_stocks = snapshot.total_stocks
+                existing.advancing = snapshot.advancing
+                existing.declining = snapshot.declining
+                existing.unchanged = snapshot.unchanged
+                existing.breadth_pct = snapshot.breadth_pct
+                existing.ad_ratio = snapshot.advance_decline_ratio
+                existing.nepse_index = snapshot.nepse_index
+                existing.nepse_change_pct = snapshot.nepse_change_pct
+                existing.regime = snapshot.regime.value
+            else:
+                row = DailyBreadth(
+                    date=today,
+                    total_stocks=snapshot.total_stocks,
+                    advancing=snapshot.advancing,
+                    declining=snapshot.declining,
+                    unchanged=snapshot.unchanged,
+                    breadth_pct=snapshot.breadth_pct,
+                    ad_ratio=snapshot.advance_decline_ratio,
+                    nepse_index=snapshot.nepse_index,
+                    nepse_change_pct=snapshot.nepse_change_pct,
+                    regime=snapshot.regime.value,
+                )
+                session.add(row)
+            session.commit()
+            session.close()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save breadth snapshot: {e}")
+            return False
+
+    def get_breadth_history(self, days: int = 30) -> pd.DataFrame:
+        """
+        Retrieve breadth history from DB for divergence and trend analysis.
+
+        Returns DataFrame with columns:
+            date, advancing, declining, breadth_pct, ad_ratio,
+            nepse_index, nepse_change_pct, regime
+        """
+        if DailyBreadth is None or get_session is None:
+            return pd.DataFrame()
+
+        cutoff = date.today() - timedelta(days=days)
+        try:
+            session = get_session()
+            rows = (
+                session.query(DailyBreadth)
+                .filter(DailyBreadth.date >= cutoff)
+                .order_by(DailyBreadth.date)
+                .all()
+            )
+            session.close()
+
+            if not rows:
+                return pd.DataFrame()
+
+            return pd.DataFrame([
+                {
+                    "date": r.date,
+                    "advancing": r.advancing,
+                    "declining": r.declining,
+                    "breadth_pct": r.breadth_pct,
+                    "ad_ratio": r.ad_ratio,
+                    "nepse_index": r.nepse_index,
+                    "nepse_change_pct": r.nepse_change_pct,
+                    "regime": r.regime,
+                }
+                for r in rows
+            ])
+        except Exception as e:
+            logger.error(f"Failed to load breadth history: {e}")
+            return pd.DataFrame()
+
+    def detect_multi_day_divergence(self, days: int = 5) -> Optional[str]:
+        """
+        Detect sustained breadth divergence over multiple days.
+        More reliable than single-day divergence detection.
+
+        Returns warning string or None.
+        """
+        df = self.get_breadth_history(days=days + 5)
+        if len(df) < days:
+            return None
+
+        recent = df.tail(days)
+        idx_up = (recent["nepse_change_pct"] > 0).sum() >= (days * 0.6)
+        breadth_weak = recent["breadth_pct"].mean() < 45
+
+        idx_down = (recent["nepse_change_pct"] < 0).sum() >= (days * 0.6)
+        breadth_strong = recent["breadth_pct"].mean() > 55
+
+        if idx_up and breadth_weak:
+            avg_b = recent["breadth_pct"].mean()
+            return (
+                f"BEARISH DIVERGENCE ({days}d): Index rising but avg breadth "
+                f"only {avg_b:.0f}% — narrow rally, correction risk"
+            )
+        if idx_down and breadth_strong:
+            avg_b = recent["breadth_pct"].mean()
+            return (
+                f"BULLISH DIVERGENCE ({days}d): Index falling but avg breadth "
+                f"{avg_b:.0f}% — broad support, bounce likely"
+            )
+        return None
 
 
 # Convenience functions

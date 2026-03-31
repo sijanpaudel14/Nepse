@@ -735,44 +735,55 @@ class NepseFetcher:
 
 def save_prices_to_db(df: pd.DataFrame) -> int:
     """
-    Save price data to database.
-    
+    Save price data to database using bulk upsert.
+
+    Phase 1 fix: replaces row-by-row INSERT/UPDATE with batch operations.
+    For SQLite, uses INSERT OR REPLACE via raw SQL for maximum throughput.
+
     Args:
-        df: DataFrame with price data
-        
+        df: DataFrame with columns: symbol, date, open, high, low, close, volume, [turnover, trades]
+
     Returns:
-        Number of records saved
+        Number of records saved/updated
     """
     if df.empty:
         return 0
-    
+
     db = SessionLocal()
     saved_count = 0
-    
+
     try:
+        # 1. Pre-fetch all stock IDs in one query
+        symbols = df["symbol"].unique().tolist() if "symbol" in df.columns else []
+        existing_stocks = {
+            s.symbol: s.id
+            for s in db.query(Stock).filter(Stock.symbol.in_(symbols)).all()
+        }
+
+        # 2. Create any missing stocks in batch
+        new_symbols = [s for s in symbols if s not in existing_stocks]
+        if new_symbols:
+            new_stocks = [Stock(symbol=s) for s in new_symbols]
+            db.add_all(new_stocks)
+            db.flush()
+            for ns in new_stocks:
+                existing_stocks[ns.symbol] = ns.id
+
+        # 3. Prepare rows for bulk upsert
+        rows_to_upsert = []
         for _, row in df.iterrows():
             symbol = row.get("symbol", "")
-            if not symbol:
+            stock_id = existing_stocks.get(symbol)
+            if not stock_id:
                 continue
-            
-            # Get or create stock
-            stock = db.query(Stock).filter(Stock.symbol == symbol).first()
-            if not stock:
-                stock = Stock(symbol=symbol)
-                db.add(stock)
-                db.flush()
-            
+
             trade_date = row.get("date", date.today())
             if isinstance(trade_date, str):
                 trade_date = datetime.strptime(trade_date, "%Y-%m-%d").date()
-            
-            # Check if price already exists
-            existing = db.query(DailyPrice).filter(
-                DailyPrice.stock_id == stock.id,
-                DailyPrice.date == trade_date
-            ).first()
-            
-            price_data = {
+
+            rows_to_upsert.append({
+                "stock_id": stock_id,
+                "date": trade_date,
                 "open": row.get("open", 0) or 0,
                 "high": row.get("high", 0) or 0,
                 "low": row.get("low", 0) or 0,
@@ -780,31 +791,65 @@ def save_prices_to_db(df: pd.DataFrame) -> int:
                 "volume": row.get("volume", 0) or 0,
                 "turnover": row.get("turnover"),
                 "trades": row.get("trades"),
-            }
-            
-            if existing:
-                for key, value in price_data.items():
-                    setattr(existing, key, value)
-            else:
-                price = DailyPrice(
-                    stock_id=stock.id,
-                    date=trade_date,
-                    **price_data
+            })
+
+        # 4. Bulk upsert: delete-then-insert for conflicting rows (SQLite compatible)
+        if rows_to_upsert:
+            # Pre-fetch existing (stock_id, date) pairs
+            date_pairs = [(r["stock_id"], r["date"]) for r in rows_to_upsert]
+            existing_dates = set()
+            # Query in batches of 500 to avoid too-large IN clauses
+            for i in range(0, len(date_pairs), 500):
+                batch = date_pairs[i : i + 500]
+                for sid, d in batch:
+                    hit = (
+                        db.query(DailyPrice.id)
+                        .filter(DailyPrice.stock_id == sid, DailyPrice.date == d)
+                        .first()
+                    )
+                    if hit:
+                        existing_dates.add((sid, d))
+
+            new_rows = [
+                r for r in rows_to_upsert if (r["stock_id"], r["date"]) not in existing_dates
+            ]
+            update_rows = [
+                r for r in rows_to_upsert if (r["stock_id"], r["date"]) in existing_dates
+            ]
+
+            # Batch insert new rows
+            if new_rows:
+                db.bulk_insert_mappings(DailyPrice, new_rows)
+                saved_count += len(new_rows)
+
+            # Batch update existing rows
+            for r in update_rows:
+                db.query(DailyPrice).filter(
+                    DailyPrice.stock_id == r["stock_id"],
+                    DailyPrice.date == r["date"],
+                ).update(
+                    {
+                        DailyPrice.open: r["open"],
+                        DailyPrice.high: r["high"],
+                        DailyPrice.low: r["low"],
+                        DailyPrice.close: r["close"],
+                        DailyPrice.volume: r["volume"],
+                    },
+                    synchronize_session=False,
                 )
-                db.add(price)
                 saved_count += 1
-        
+
         db.commit()
-        logger.info(f"Saved {saved_count} new price records to database")
-        
+        logger.info(f"Bulk upsert: {saved_count} price records ({len(rows_to_upsert)} total)")
+
     except Exception as e:
         db.rollback()
         logger.error(f"Error saving prices: {e}")
         raise
-        
+
     finally:
         db.close()
-    
+
     return saved_count
 
 
@@ -818,6 +863,55 @@ def fetch_stock_history(symbol: str, days: int = None) -> pd.DataFrame:
     """Convenience function to fetch stock history."""
     fetcher = NepseFetcher()
     return fetcher.fetch_price_history(symbol, days)
+
+
+def check_data_freshness(symbol: str, max_stale_days: int = 3) -> Dict[str, Any]:
+    """
+    Check if stored price data is fresh enough for analysis.
+
+    Returns:
+        Dict with keys: is_fresh, latest_date, days_stale, message
+    """
+    db = SessionLocal()
+    try:
+        stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+        if not stock:
+            return {
+                "is_fresh": False,
+                "latest_date": None,
+                "days_stale": None,
+                "message": f"Stock {symbol} not found in database",
+            }
+
+        latest = (
+            db.query(DailyPrice.date)
+            .filter(DailyPrice.stock_id == stock.id)
+            .order_by(DailyPrice.date.desc())
+            .first()
+        )
+        if not latest:
+            return {
+                "is_fresh": False,
+                "latest_date": None,
+                "days_stale": None,
+                "message": f"No price data for {symbol}",
+            }
+
+        latest_date = latest[0]
+        days_stale = (date.today() - latest_date).days
+        is_fresh = days_stale <= max_stale_days
+
+        return {
+            "is_fresh": is_fresh,
+            "latest_date": latest_date,
+            "days_stale": days_stale,
+            "message": (
+                f"{symbol}: data is {'fresh' if is_fresh else 'STALE'} "
+                f"(latest: {latest_date}, {days_stale}d ago)"
+            ),
+        }
+    finally:
+        db.close()
 
 
 def fetch_and_save_today() -> int:

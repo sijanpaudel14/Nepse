@@ -3,7 +3,7 @@ Database configuration and models using SQLAlchemy 2.0.
 Supports SQLite for development and PostgreSQL for production.
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, List
 from decimal import Decimal
 
@@ -28,7 +28,7 @@ from sqlalchemy.orm import (
     relationship,
     Session,
 )
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, QueuePool
 
 from core.config import settings
 from loguru import logger
@@ -57,7 +57,7 @@ class Stock(Base):
     
     # Status
     is_active = Column(Boolean, default=True)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     prices = relationship("DailyPrice", back_populates="stock", lazy="dynamic")
@@ -95,7 +95,7 @@ class DailyPrice(Base):
     rsi_14 = Column(Float, nullable=True)
     volume_avg_20 = Column(Float, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     stock = relationship("Stock", back_populates="prices")
@@ -147,7 +147,7 @@ class Signal(Base):
     actual_exit_price = Column(Float, nullable=True)
     profit_loss_pct = Column(Float, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     stock = relationship("Stock", back_populates="signals")
@@ -194,8 +194,8 @@ class Trade(Base):
     stop_loss_price = Column(Float, nullable=True)
     target_price = Column(Float, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     def __repr__(self):
         return f"<Trade {self.trade_type} {self.stock_id} @ {self.entry_date}>"
@@ -231,7 +231,7 @@ class MarketData(Base):
     hydropower_index = Column(Float, nullable=True)
     insurance_index = Column(Float, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     def __repr__(self):
         return f"<MarketData {self.date}: NEPSE {self.nepse_index}>"
@@ -272,10 +272,109 @@ class BacktestResult(Base):
     profit_factor = Column(Float, nullable=True)
     expectancy = Column(Float, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     def __repr__(self):
         return f"<BacktestResult {self.strategy_name}: {self.total_return_pct}%>"
+
+
+class LivePosition(Base):
+    """
+    Persistent live/paper positions — survives process restarts.
+    Phase 4.6: position persistence to SQLite.
+    """
+    __tablename__ = "live_positions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    shares = Column(Integer, nullable=False)
+    entry_price = Column(Float, nullable=False)
+    entry_date = Column(Date, nullable=False)
+    sector = Column(String(100), default="")
+
+    # Stops
+    stop_loss = Column(Float, default=0.0)
+    trailing_stop = Column(Float, default=0.0)
+    target_price = Column(Float, default=0.0)
+    highest_price = Column(Float, default=0.0)  # for trailing
+    current_atr = Column(Float, default=0.0)
+
+    # State
+    status = Column(String(20), default="OPEN")  # OPEN, CLOSED
+    css_score = Column(Float, default=0.0)
+
+    # Exit
+    exit_price = Column(Float, nullable=True)
+    exit_date = Column(Date, nullable=True)
+    exit_reason = Column(String(50), default="")
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<LivePosition {self.symbol} {self.shares}@{self.entry_price} [{self.status}]>"
+
+
+class DailyBreadth(Base):
+    """
+    Daily market breadth history — Phase 5.6.
+    Stores daily A/D data for divergence detection over time.
+    """
+    __tablename__ = "daily_breadth"
+    __table_args__ = (
+        UniqueConstraint("date", name="uq_daily_breadth_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False, index=True)
+    total_stocks = Column(Integer, default=0)
+    advancing = Column(Integer, default=0)
+    declining = Column(Integer, default=0)
+    unchanged = Column(Integer, default=0)
+    breadth_pct = Column(Float, default=0.0)
+    ad_ratio = Column(Float, default=0.0)
+    nepse_index = Column(Float, default=0.0)
+    nepse_change_pct = Column(Float, default=0.0)
+    regime = Column(String(20), default="NEUTRAL")
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<DailyBreadth {self.date}: {self.advancing}A/{self.declining}D>"
+
+
+class MacroSnapshot(Base):
+    """
+    NRB macroeconomic data snapshots — Phase 5.4.
+    Manual-entry + scoring framework for key indicators.
+    """
+    __tablename__ = "macro_snapshots"
+    __table_args__ = (
+        UniqueConstraint("date", name="uq_macro_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False, index=True)
+
+    # NRB indicators
+    interbank_rate = Column(Float, nullable=True)      # Daily NRB rate
+    ccd_ratio = Column(Float, nullable=True)            # Credit-to-Core-Deposit
+    inflation_rate = Column(Float, nullable=True)       # YoY CPI inflation
+    remittance_growth = Column(Float, nullable=True)    # Monthly remittance growth %
+    base_rate = Column(Float, nullable=True)            # NRB base rate
+
+    # Derived scores (0-100)
+    liquidity_score = Column(Float, default=50.0)
+    banking_health_score = Column(Float, default=50.0)
+    overall_macro_score = Column(Float, default=50.0)
+
+    notes = Column(Text, default="")
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<MacroSnapshot {self.date}: macro={self.overall_macro_score:.0f}>"
 
 
 # ============ DATABASE ENGINE & SESSION ============
@@ -283,11 +382,12 @@ class BacktestResult(Base):
 def get_engine():
     """Create database engine based on configuration."""
     if settings.database_is_sqlite:
-        # SQLite-specific settings for better concurrency
+        # SQLite: use NullPool (new connection per request) with WAL mode
+        # WAL mode allows concurrent reads while writing
         engine = create_engine(
             settings.database_url,
             connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
+            poolclass=NullPool,
             echo=False,
         )
     else:
@@ -297,6 +397,7 @@ def get_engine():
             pool_pre_ping=True,
             pool_size=5,
             max_overflow=10,
+            poolclass=QueuePool,
             echo=False,
         )
     return engine
@@ -329,11 +430,13 @@ def get_db() -> Session:
         db.close()
 
 
-# Enable foreign keys for SQLite
+# Enable foreign keys and WAL mode for SQLite
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
-    """Enable foreign key support for SQLite."""
+    """Enable foreign key support and WAL mode for SQLite."""
     if settings.database_is_sqlite:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()

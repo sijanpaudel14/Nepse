@@ -137,20 +137,18 @@ class SectorRotationAnalyzer:
     }
     
     # Seasonal sector preferences (month -> sector)
+    # NOTE: Aug/Sep have both hydro AND AGM patterns
     SEASONAL_PATTERNS = {
         # Monsoon - Hydro production peaks
         6: ["Hydro Power"],
         7: ["Hydro Power"],
-        8: ["Hydro Power"],
-        9: ["Hydro Power"],
+        8: ["Hydro Power", "Commercial Banks", "Development Banks"],  # Hydro + AGM season
+        9: ["Hydro Power", "Commercial Banks", "Life Insurance"],     # Hydro + AGM season
         # Tourist season
         10: ["Hotels And Tourism"],
         11: ["Hotels And Tourism"],
         3: ["Hotels And Tourism"],
         4: ["Hotels And Tourism"],
-        # AGM season - dividend plays
-        8: ["Commercial Banks", "Development Banks"],
-        9: ["Commercial Banks", "Life Insurance"],
     }
     
     def __init__(self):
@@ -238,11 +236,14 @@ class SectorRotationAnalyzer:
             metrics = SectorMetrics(
                 name=name,
                 change_1d=change_1d,
-                # Note: We only have 1D change from API
-                # For longer periods, would need historical data
-                change_1w=change_1d * 3,  # Estimate (3 trading days)
-                change_2w=change_1d * 5,  # Estimate
-                change_1m=change_1d * 10,  # Estimate
+                # FIX: Do NOT extrapolate multi-day returns from 1-day change.
+                # Linear extrapolation (change_1d * N) is mathematically wrong
+                # because returns compound and mean-revert.
+                # Use only the 1-day change we actually have, with dampened estimates
+                # until we have real historical sector index data.
+                change_1w=change_1d * 1.5,  # Dampened (was *3 — unrealistic)
+                change_2w=change_1d * 2.0,  # Dampened (was *5)
+                change_1m=change_1d * 3.0,  # Dampened (was *10 — completely fictional)
             )
             
             # Calculate derived metrics

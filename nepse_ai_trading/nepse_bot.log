@@ -7,3 +7,21 @@
 2026-03-26 12:18:01 | INFO     | data.sharehub_api:login:538 - 🔐 Logging into ShareHub as waytoyourdestination6@gmail.com...
 2026-03-26 12:18:02 | INFO     | data.sharehub_api:login:586 - ✅ ShareHub Login Successful! Token refreshed.
 2026-03-26 12:18:02 | INFO     | intelligence.ipo_exit_analyzer:analyze:353 - 📊 SOHL: Exit Signal = watch, Verdict = WATCH CLOSELY
+2026-03-30 22:15:56 | INFO     | core.logging_config:setup_logging:51 - Logging initialized. Level: INFO
+2026-03-30 22:15:56 | INFO     | __main__:run_full_pipeline:196 - 🚀 Starting NEPSE AI Trading Bot at 2026-03-30 22:15:56
+2026-03-30 22:15:56 | INFO     | core.database:init_db:416 - Initializing database...
+2026-03-30 22:15:56 | INFO     | core.database:init_db:418 - Database initialized successfully.
+2026-03-30 22:15:56 | INFO     | __main__:run_data_fetch:36 - ==================================================
+2026-03-30 22:15:56 | INFO     | __main__:run_data_fetch:37 - STEP 1: Fetching market data...
+2026-03-30 22:15:56 | INFO     | __main__:run_data_fetch:38 - ==================================================
+2026-03-30 22:15:57 | INFO     | data.fetcher:__init__:61 - NepseFetcher initialized with official NepseUnofficialApi
+2026-03-30 22:15:57 | ERROR    | __main__:run_data_fetch:62 - Data fetch failed: 'NepseFetcher' object has no attribute 'fetch_today_prices'
+2026-03-30 22:15:57 | WARNING  | __main__:run_full_pipeline:203 - Continuing with existing data...
+2026-03-30 22:15:57 | INFO     | __main__:run_screener:73 - ==================================================
+2026-03-30 22:15:57 | INFO     | __main__:run_screener:74 - STEP 2: Running technical analysis screener...
+2026-03-30 22:15:57 | INFO     | __main__:run_screener:75 - ==================================================
+2026-03-30 22:15:57 | INFO     | analysis.screener:__init__:74 - Initialized screener with 4 strategies
+2026-03-30 22:15:57 | INFO     | analysis.screener:screen_all:185 - Screening 0 stocks with 4 strategies...
+2026-03-30 22:15:57 | INFO     | analysis.screener:screen_all:208 - Found 0 stocks with signals
+2026-03-30 22:15:57 | INFO     | __main__:run_screener:82 - No stocks passed screening criteria today.
+2026-03-30 22:15:57 | INFO     | __main__:run_full_pipeline:209 - No signals today. Pipeline complete.
