@@ -3485,6 +3485,22 @@ def main():
         result = subprocess.run([sys.executable, script] + sys.argv[2:])
         sys.exit(result.returncode)
 
+    # Handle 'populate' subcommand — delegates to populate_db.py
+    if len(sys.argv) > 1 and sys.argv[1] == "populate":
+        import subprocess, os as _os
+        _dir = _os.path.dirname(_os.path.abspath(__file__))
+        script = _os.path.join(_dir, "populate_db.py")
+        result = subprocess.run([sys.executable, script] + sys.argv[2:])
+        sys.exit(result.returncode)
+
+    # Handle 'confirm' subcommand — delegates to entry_confirm.py
+    if len(sys.argv) > 1 and sys.argv[1] == "confirm":
+        import subprocess, os as _os
+        _dir = _os.path.dirname(_os.path.abspath(__file__))
+        script = _os.path.join(_dir, "entry_confirm.py")
+        result = subprocess.run([sys.executable, script] + sys.argv[2:])
+        sys.exit(result.returncode)
+
     # Allow subcommand-style: `nepse stealth` → `--action stealth-scan`
     _SUBCMD_MAP = {
         "stealth": "stealth-scan",
@@ -3512,7 +3528,8 @@ def main():
   buy          - Confirm a purchase (use with --symbol and --price)
   skip         - Mark a recommendation as skipped
   pending      - List all pending recommendations
-  analyze      - Deep analysis of a specific stock (use with --stock=SYMBOL)"""
+  analyze      - Deep analysis of a specific stock (use with --stock=SYMBOL)
+  [confirm]    - Live entry trigger check: nepse confirm SYMBOL (separate command)"""
     )
     # Compatibility aliases for requested two-command workflow:
     # python paper_trader.py --scan --strategy=momentum

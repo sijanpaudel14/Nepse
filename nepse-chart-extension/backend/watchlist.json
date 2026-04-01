@@ -1,5 +1,5 @@
 {
-  "saved_at": "2026-03-31T11:11:21.589928+00:00",
+  "saved_at": "2026-04-01T07:48:58.687346+00:00",
   "total_scanned": 97,
   "stocks": [
     {
@@ -13,18 +13,6 @@
       "checklist_score": 12,
       "entry_status": "ENTRY ZONE",
       "composite_score": 76.2
-    },
-    {
-      "symbol": "SGHC",
-      "company_name": "Swet-Ganga Hydropower and Construction Limited",
-      "sector": "Hydro Power",
-      "current_price": 423.0,
-      "suggested_sl": 399.4,
-      "suggested_target": 470.2,
-      "rr_ratio": 2.0,
-      "checklist_score": 11,
-      "entry_status": "WAIT",
-      "composite_score": 91.1
     },
     {
       "symbol": "NYADI",
@@ -63,6 +51,18 @@
       "composite_score": 78.8
     },
     {
+      "symbol": "HPPL",
+      "company_name": "Himalayan Power Partner Ltd.",
+      "sector": "Hydro Power",
+      "current_price": 396.0,
+      "suggested_sl": 364.6,
+      "suggested_target": 443.11,
+      "rr_ratio": 1.5,
+      "checklist_score": 11,
+      "entry_status": "WAIT",
+      "composite_score": 72.6
+    },
+    {
       "symbol": "SHEL",
       "company_name": "Singati Hydro Energy Ltd",
       "sector": "Hydro Power",
@@ -99,16 +99,16 @@
       "composite_score": 76.4
     },
     {
-      "symbol": "MHL",
-      "company_name": "Mandakini Hydropower Limited",
+      "symbol": "SGHC",
+      "company_name": "Swet-Ganga Hydropower and Construction Limited",
       "sector": "Hydro Power",
-      "current_price": 535.0,
-      "suggested_sl": 509.98,
-      "suggested_target": 585.04,
+      "current_price": 413.0,
+      "suggested_sl": 372.32,
+      "suggested_target": 494.36,
       "rr_ratio": 2.0,
       "checklist_score": 9,
-      "entry_status": "ENTRY ZONE",
-      "composite_score": 74.6
+      "entry_status": "WAIT",
+      "composite_score": 79.0
     },
     {
       "symbol": "BHCL",

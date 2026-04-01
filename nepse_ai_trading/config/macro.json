@@ -1,0 +1,29 @@
+{
+  "_comment": "NRB Macroeconomic Indicators — Update manually from NRB website (https://nrb.org.np)",
+  "_last_updated": "2025-01-01",
+
+  "interbank_rate": 4.5,
+  "_interbank_rate_note": "NRB daily interbank rate %. Below 5=bullish (loose liquidity), Above 7=bearish.",
+
+  "ccd_ratio": 72.0,
+  "_ccd_ratio_note": "Credit-to-Core-Deposit ratio %. Above 80=banks can't lend (bearish), Below 70=lots of room (bullish).",
+
+  "inflation_rate": 5.5,
+  "_inflation_rate_note": "CPI inflation % YoY. Sweet spot 3-5% (NRB target ~6%). Above 8=rate hike risk.",
+
+  "remittance_growth": 8.0,
+  "_remittance_growth_note": "Remittance % YoY growth. Higher = more liquidity in Nepal = bullish. Above 10=strong.",
+
+  "base_rate": 7.5,
+  "_base_rate_note": "NRB base rate %. Below 5=bullish cheap borrowing, Above 9=very tight.",
+
+  "_how_to_update": [
+    "1. Visit https://www.nrb.org.np → Publications → Current Macroeconomic Situation",
+    "2. Update interbank_rate: NRB daily money market rate",
+    "3. Update ccd_ratio: From quarterly banking supervision report",
+    "4. Update inflation_rate: From monthly CPI report",
+    "5. Update remittance_growth: From BOP/Remittance monthly report",
+    "6. Update base_rate: From NRB monetary policy / banking circulars",
+    "7. Update _last_updated with today's date"
+  ]
+}
